@@ -1,0 +1,6 @@
+# Local embedding model files (23MB, download separately)
+models/
+
+# OS
+Thumbs.db
+Desktop.ini

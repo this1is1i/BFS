@@ -1,0 +1,1766 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BFS — Bookmark Favorites System</title>
+<style>
+/* ============================================================
+   CSS Custom Properties — Light & Dark Themes
+   ============================================================ */
+:root {
+  --primary: #4a6fa5;
+  --primary-hover: #3b5d8c;
+  --accent: #166088;
+  --bg: #f5f7fa;
+  --bg-secondary: #eef1f5;
+  --surface: #ffffff;
+  --surface-hover: #f0f3f8;
+  --text: #1a1a2e;
+  --text-secondary: #5a5a7a;
+  --text-muted: #8888a8;
+  --border: #dde1e8;
+  --shadow-sm: 0 1px 3px rgba(0,0,0,0.06);
+  --shadow: 0 4px 12px rgba(0,0,0,0.08);
+  --shadow-lg: 0 12px 32px rgba(0,0,0,0.12);
+  --radius: 8px;
+  --radius-lg: 12px;
+  --transition: 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  --sidebar-width: 220px;
+  --progress-height: 32px;
+  --font: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  --font-mono: 'Cascadia Code', 'Fira Code', 'JetBrains Mono', monospace;
+  --chat-bg: #f8f9fb;
+  --card-pending-bg: #fafafa;
+  --success: #2e7d32;
+  --warning: #e65100;
+  --error: #c62828;
+  --info: #1565c0;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --primary: #6b9fd4;
+    --primary-hover: #80b3e0;
+    --accent: #4da8da;
+    --bg: #12141a;
+    --bg-secondary: #1a1d26;
+    --surface: #1e212b;
+    --surface-hover: #262a36;
+    --text: #e4e4ec;
+    --text-secondary: #a0a0b8;
+    --text-muted: #686880;
+    --border: #2a2d38;
+    --shadow-sm: 0 1px 3px rgba(0,0,0,0.3);
+    --shadow: 0 4px 12px rgba(0,0,0,0.4);
+    --shadow-lg: 0 12px 32px rgba(0,0,0,0.5);
+    --chat-bg: #181a22;
+    --card-pending-bg: #1a1c24;
+  }
+}
+
+/* ============================================================
+   Reset & Base
+   ============================================================ */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  height: 100%;
+  font-family: var(--font);
+  background: var(--bg);
+  color: var(--text);
+  overflow: hidden;
+  transition: background var(--transition), color var(--transition);
+}
+
+button {
+  font-family: inherit;
+  cursor: pointer;
+  border: none;
+  border-radius: var(--radius);
+  padding: 8px 16px;
+  font-size: 14px;
+  transition: all var(--transition);
+}
+
+input, textarea {
+  font-family: inherit;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  padding: 8px 12px;
+  font-size: 14px;
+  background: var(--surface);
+  color: var(--text);
+  transition: border-color var(--transition);
+}
+input:focus, textarea:focus { outline: none; border-color: var(--primary); }
+
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+/* ============================================================
+   App Shell
+   ============================================================ */
+#app {
+  display: flex;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* ---- Sidebar ---- */
+#sidebar {
+  width: var(--sidebar-width);
+  min-width: var(--sidebar-width);
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  transition: margin-left var(--transition), opacity var(--transition);
+  overflow-y: auto;
+  z-index: 10;
+}
+#sidebar.collapsed {
+  margin-left: calc(-1 * var(--sidebar-width));
+  opacity: 0;
+  pointer-events: none;
+}
+
+.sidebar-section {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+}
+.sidebar-section h3 {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+.sidebar-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text-secondary);
+  transition: all var(--transition);
+}
+.sidebar-item:hover { background: var(--surface-hover); color: var(--text); }
+.sidebar-item.active { background: color-mix(in srgb, var(--primary) 15%, transparent); color: var(--primary); font-weight: 600; }
+.sidebar-item .count { margin-left: auto; font-size: 11px; color: var(--text-muted); background: var(--bg-secondary); padding: 1px 6px; border-radius: 10px; }
+
+/* ---- Main Area ---- */
+#main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  position: relative;
+}
+
+/* ---- Top Bar ---- */
+#topbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  min-height: 40px;
+  flex-wrap: wrap;
+}
+#toggle-sidebar {
+  background: none;
+  padding: 4px 8px;
+  font-size: 14px;
+  color: var(--text-secondary);
+  border-radius: 6px;
+  flex-shrink: 0;
+}
+#toggle-sidebar:hover { background: var(--surface-hover); }
+#topbar .search-input {
+  flex: 1;
+  max-width: 300px;
+  padding: 5px 8px;
+  font-size: 13px;
+}
+#topbar .topbar-btn {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  font-size: 12px;
+  padding: 5px 10px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+#topbar .topbar-btn:hover { background: var(--surface-hover); }
+
+/* ---- Content Area (Chat + Cards) ---- */
+#content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  position: relative;
+}
+
+/* ---- Chat Panel ---- */
+#chat-panel {
+  border-bottom: 1px solid var(--border);
+  background: var(--chat-bg);
+  transition: max-height var(--transition), opacity var(--transition);
+  max-height: 320px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+#chat-panel.collapsed { max-height: 0; opacity: 0; border-bottom: none; }
+
+#chat-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.chat-msg {
+  max-width: 85%;
+  padding: 10px 14px;
+  border-radius: var(--radius-lg);
+  font-size: 14px;
+  line-height: 1.5;
+  animation: msgIn 0.2s ease;
+}
+@keyframes msgIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+.chat-msg.user {
+  align-self: flex-end;
+  background: var(--primary);
+  color: #fff;
+  border-bottom-right-radius: 4px;
+}
+.chat-msg.assistant {
+  align-self: flex-start;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-bottom-left-radius: 4px;
+}
+.chat-msg .rec-card {
+  display: block;
+  margin-top: 6px;
+  padding: 8px;
+  background: var(--bg-secondary);
+  border-radius: 6px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background var(--transition);
+}
+.chat-msg .rec-card:hover { background: var(--surface-hover); }
+.chat-msg .rec-card .rec-title { font-weight: 600; color: var(--primary); }
+.chat-msg .rec-card .rec-reason { font-size: 12px; color: var(--text-secondary); margin-top: 2px; }
+
+#chat-input-area {
+  display: flex;
+  gap: 8px;
+  padding: 8px 16px;
+  border-top: 1px solid var(--border);
+}
+#chat-input {
+  flex: 1;
+  resize: none;
+  min-height: 38px;
+  max-height: 100px;
+}
+#chat-send {
+  align-self: flex-end;
+  background: var(--primary);
+  color: #fff;
+  padding: 8px 16px;
+  font-weight: 600;
+}
+#chat-send:hover { background: var(--primary-hover); }
+#chat-send:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* ---- Floating Chat Button ---- */
+#chat-fab {
+  position: absolute;
+  bottom: 20px;
+  right: 20px;
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  background: var(--primary);
+  color: #fff;
+  font-size: 24px;
+  box-shadow: var(--shadow-lg);
+  z-index: 20;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  transition: transform var(--transition), box-shadow var(--transition);
+}
+#chat-fab:hover { transform: scale(1.08); box-shadow: 0 16px 40px rgba(0,0,0,0.2); }
+#chat-fab.visible { display: flex; }
+
+/* ---- Card Grid ---- */
+#card-grid-area {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+}
+#card-grid-area.folder-view { /* folder group mode */ }
+
+.folder-group { margin-bottom: 20px; }
+.folder-group-header {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-secondary);
+  padding: 8px 4px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  user-select: none;
+}
+.folder-group-header::before {
+  content: "▶";
+  font-size: 10px;
+  transition: transform var(--transition);
+  display: inline-block;
+  width: 14px;
+}
+.folder-group-header.expanded::before { transform: rotate(90deg); }
+.folder-group-header .folder-count { font-weight: 400; color: var(--text-muted); font-size: 12px; }
+
+#card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 14px;
+}
+
+/* ---- Bookmark Card ---- */
+.bookmark-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px;
+  transition: all var(--transition);
+  position: relative;
+  cursor: default;
+}
+.bookmark-card:hover {
+  box-shadow: var(--shadow);
+  transform: translateY(-2px);
+}
+.bookmark-card.pending {
+  background: var(--card-pending-bg);
+  opacity: 0.7;
+}
+.bookmark-card .card-title {
+  font-weight: 700;
+  font-size: 15px;
+  color: var(--text);
+  margin-bottom: 6px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.bookmark-card .card-url {
+  font-size: 12px;
+  color: var(--accent);
+  margin-bottom: 8px;
+  word-break: break-all;
+  display: -webkit-box;
+  -webkit-line-clamp: 1;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.bookmark-card .card-summary {
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  margin-bottom: 8px;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.bookmark-card .card-keywords {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-style: italic;
+  margin-bottom: 8px;
+}
+.bookmark-card .card-categories {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+.bookmark-card .card-category-tag {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--primary) 12%, transparent);
+  color: var(--primary);
+  cursor: pointer;
+  transition: background var(--transition);
+}
+.bookmark-card .card-category-tag:hover { background: color-mix(in srgb, var(--primary) 25%, transparent); }
+.bookmark-card .card-meta {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.bookmark-card .card-loading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+.bookmark-card .card-loading .dot-pulse {
+  display: flex;
+  gap: 4px;
+}
+.bookmark-card .card-loading .dot-pulse span {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--primary);
+  animation: dotBounce 1.2s infinite ease-in-out;
+}
+.bookmark-card .card-loading .dot-pulse span:nth-child(2) { animation-delay: 0.2s; }
+.bookmark-card .card-loading .dot-pulse span:nth-child(3) { animation-delay: 0.4s; }
+@keyframes dotBounce {
+  0%, 80%, 100% { opacity: 0.2; transform: scale(0.8); }
+  40% { opacity: 1; transform: scale(1); }
+}
+
+/* ---- Progress Bar ---- */
+#progress-bar-area {
+  height: var(--progress-height);
+  min-height: var(--progress-height);
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  padding: 0 16px;
+  gap: 12px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  transition: opacity var(--transition);
+}
+#progress-bar-area.hidden { opacity: 0; pointer-events: none; }
+#progress-track {
+  flex: 1;
+  height: 6px;
+  background: var(--bg-secondary);
+  border-radius: 3px;
+  overflow: hidden;
+}
+#progress-fill {
+  height: 100%;
+  background: var(--primary);
+  border-radius: 3px;
+  transition: width 0.4s ease;
+}
+#progress-text { min-width: 80px; text-align: right; white-space: nowrap; }
+
+/* ---- Welcome / Landing Screen ---- */
+#landing {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100vh;
+  gap: 20px;
+  text-align: center;
+  padding: 40px;
+}
+#landing h1 { font-size: 36px; color: var(--primary); }
+#landing p { color: var(--text-secondary); max-width: 480px; line-height: 1.6; }
+#landing .btn-primary {
+  background: var(--primary);
+  color: #fff;
+  padding: 12px 28px;
+  font-size: 16px;
+  font-weight: 600;
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow);
+  transition: all var(--transition);
+}
+#landing .btn-primary:hover { background: var(--primary-hover); transform: translateY(-1px); box-shadow: var(--shadow-lg); }
+#landing .btn-secondary {
+  background: var(--surface);
+  color: var(--text);
+  padding: 10px 24px;
+  font-size: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+#landing .btn-secondary:hover { background: var(--surface-hover); }
+
+/* ---- Config Panel ---- */
+#config-panel {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 360px;
+  width: 100%;
+}
+#config-panel.collapsed { display: none; }
+#config-toggle {
+  background: none;
+  color: var(--text-muted);
+  font-size: 13px;
+  padding: 4px 8px;
+}
+#config-toggle:hover { color: var(--text); }
+.config-row { display: flex; flex-direction: column; gap: 4px; }
+.config-row label { font-size: 12px; color: var(--text-secondary); font-weight: 600; }
+.config-row input { width: 100%; }
+
+/* ---- Resume Prompt ---- */
+#resume-prompt {
+  margin-top: 12px;
+  padding: 16px;
+  background: var(--bg-secondary);
+  border-radius: var(--radius);
+  text-align: center;
+  max-width: 400px;
+  width: 100%;
+}
+#resume-prompt p { margin-bottom: 10px; font-size: 14px; }
+#resume-prompt .btn-row { display: flex; gap: 8px; justify-content: center; }
+
+/* ---- Utility ---- */
+.hidden { display: none !important; }
+.spinner {
+  width: 24px; height: 24px;
+  border: 3px solid var(--border);
+  border-top-color: var(--primary);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+</style>
+</head>
+<body>
+<div id="app" class="hidden">
+  <!-- Sidebar -->
+  <aside id="sidebar" class="collapsed">
+    <div class="sidebar-section">
+      <h3>📂 分类</h3>
+      <div id="category-list"></div>
+    </div>
+    <div class="sidebar-section">
+      <h3>📁 文件夹</h3>
+      <div id="folder-tree"></div>
+    </div>
+  </aside>
+
+  <!-- Main -->
+  <div id="main">
+    <!-- Top Bar -->
+    <div id="topbar">
+      <button id="toggle-sidebar" title="侧栏">☰</button>
+      <input type="text" class="search-input" id="card-filter" placeholder="搜索书签..." />
+      <span style="font-size:12px;color:var(--text-muted);white-space:nowrap" id="bookmark-count"></span>
+      <span id="model-status" title="本地 Embedding 模型状态" style="font-size:11px;display:flex;align-items:center;gap:4px;white-space:nowrap;">
+        <span id="model-dot" style="width:8px;height:8px;border-radius:50%;background:var(--text-muted);display:inline-block;"></span>
+        <span id="model-label">模型未加载</span>
+      </span>
+      <span style="flex:1"></span>
+      <button id="btn-export-html" class="topbar-btn">📥 导出HTML</button>
+      <button id="btn-import-cache" class="topbar-btn">📋 导入缓存</button>
+      <button id="btn-export-cache" class="topbar-btn">📤 导出缓存</button>
+    </div>
+
+    <!-- Content -->
+    <div id="content">
+      <!-- Chat Panel -->
+      <div id="chat-panel" class="collapsed">
+        <div id="chat-messages"></div>
+        <div id="chat-input-area">
+          <textarea id="chat-input" rows="1" placeholder="输入你的问题，例如：找几个写 Python 测试的工具..."></textarea>
+          <button id="chat-send" disabled>发送</button>
+          <button id="chat-close" style="background:none;color:var(--text-muted);padding:4px 8px;">✕</button>
+        </div>
+      </div>
+
+      <!-- Card Grid -->
+      <div id="card-grid-area">
+        <div id="card-grid"></div>
+      </div>
+
+      <!-- Floating Chat Button -->
+      <button id="chat-fab" title="打开对话">💬</button>
+    </div>
+
+    <!-- Progress Bar -->
+    <div id="progress-bar-area" class="hidden">
+      <span id="progress-label">处理中</span>
+      <div id="progress-track"><div id="progress-fill" style="width:0%"></div></div>
+      <span id="progress-text">0/0</span>
+    </div>
+  </div>
+</div>
+
+<!-- Landing Screen -->
+<div id="landing">
+  <h1>🔖 BFS</h1>
+  <p>Bookmark Favorites System — 智能书签管理工具<br>
+  自动为书签生成摘要、关键词与分类，用自然语言快速找到所需资源</p>
+
+  <button class="btn-primary" id="btn-import">📂 导入浏览器书签文件</button>
+  <p style="font-size:12px;color:var(--text-muted)">支持 Chrome / Edge / Firefox 导出的 HTML 格式</p>
+
+  <button id="config-toggle" style="margin-top:12px;">⚙ API 配置</button>
+  <div id="config-panel" class="collapsed">
+    <div class="config-row">
+      <label>DeepSeek API Key</label>
+      <input type="password" id="cfg-deepseek-key" placeholder="sk-..." />
+    </div>
+    <div class="config-row">
+      <label>DeepSeek API URL</label>
+      <input type="text" id="cfg-deepseek-url" value="https://api.deepseek.com/v1" />
+    </div>
+    <div class="config-row">
+      <label>OpenAI API Key (可选，用于 embedding)</label>
+      <input type="password" id="cfg-openai-key" placeholder="sk-..." />
+    </div>
+    <div class="config-row">
+      <label>OpenAI API URL</label>
+      <input type="text" id="cfg-openai-url" value="https://api.openai.com/v1" />
+    </div>
+    <button class="btn-primary" id="btn-save-config" style="align-self:flex-end;margin-top:4px;">保存配置</button>
+  </div>
+
+  <div id="resume-prompt" class="hidden"></div>
+</div>
+
+<script>
+// ============================================================
+// BFS v2 — Main Application
+// ============================================================
+
+// ---- Constants ----
+const CONCURRENT_LIMIT = 3;
+const CLUSTER_TRIGGER_COUNT = 20;
+const SEARCH_TOP_K = 20;
+const DB_NAME = 'bfs_db';
+const DB_VERSION = 1;
+const OPFS_CACHE_FILE = 'bfs_cache.json';
+const OPFS_PROGRESS_FILE = 'bfs_progress.json';
+
+// ---- DOM Refs ----
+const $ = (sel) => document.querySelector(sel);
+const $$ = (sel) => document.querySelectorAll(sel);
+
+const domApp = $('#app');
+const domLanding = $('#landing');
+const domSidebar = $('#sidebar');
+const domToggleSidebar = $('#toggle-sidebar');
+const domCategoryList = $('#category-list');
+const domFolderTree = $('#folder-tree');
+const domCardFilter = $('#card-filter');
+const domBookmarkCount = $('#bookmark-count');
+const domCardGrid = $('#card-grid');
+const domChatPanel = $('#chat-panel');
+const domChatMessages = $('#chat-messages');
+const domChatInput = $('#chat-input');
+const domChatSend = $('#chat-send');
+const domChatClose = $('#chat-close');
+const domChatFab = $('#chat-fab');
+const domProgressArea = $('#progress-bar-area');
+const domProgressFill = $('#progress-fill');
+const domProgressText = $('#progress-text');
+const domProgressLabel = $('#progress-label');
+const domBtnImport = $('#btn-import');
+const domConfigToggle = $('#config-toggle');
+const domConfigPanel = $('#config-panel');
+const domCfgDeepseekKey = $('#cfg-deepseek-key');
+const domCfgDeepseekUrl = $('#cfg-deepseek-url');
+const domCfgOpenaiKey = $('#cfg-openai-key');
+const domCfgOpenaiUrl = $('#cfg-openai-url');
+const domBtnSaveConfig = $('#btn-save-config');
+const domResumePrompt = $('#resume-prompt');
+const domModelDot = $('#model-dot');
+const domModelLabel = $('#model-label');
+
+// ---- State ----
+let config = {
+  deepseekKey: '',
+  deepseekUrl: 'https://api.deepseek.com/v1',
+  openaiKey: '',
+  openaiUrl: 'https://api.openai.com/v1',
+};
+let bookmarks = [];               // { url, title, addDate, folder, icon }
+let bookmarkMap = {};             // url → Bookmark, for O(1) lookup
+let cache = { version: 2, lastModified: '', bookmarks: {}, categoryLabels: {} };
+let categoryLabels = {};          // cluster_id → label
+let folderTree = {};             // folderName → Bookmark[]
+let selectedCategory = null;
+let selectedFolder = null;
+let queueRunning = false;
+let bookmarksDirHandle = null;   // FileSystemDirectoryHandle for bookmark file's dir
+
+// ---- Config Persistence (localStorage) ----
+function loadConfig() {
+  try {
+    const saved = JSON.parse(localStorage.getItem('bfs_config'));
+    if (saved) Object.assign(config, saved);
+    domCfgDeepseekKey.value = config.deepseekKey;
+    domCfgDeepseekUrl.value = config.deepseekUrl;
+    domCfgOpenaiKey.value = config.openaiKey;
+    domCfgOpenaiUrl.value = config.openaiUrl;
+  } catch(e) { /* ignore */ }
+}
+
+function saveConfig() {
+  config.deepseekKey = domCfgDeepseekKey.value.trim();
+  config.deepseekUrl = domCfgDeepseekUrl.value.trim();
+  config.openaiKey = domCfgOpenaiKey.value.trim();
+  config.openaiUrl = domCfgOpenaiUrl.value.trim();
+  localStorage.setItem('bfs_config', JSON.stringify(config));
+}
+
+// ---- IndexedDB Helpers (primary store: works from file://, much larger than localStorage) ----
+const IDB_CACHE_KEY = 'bfs_cache';
+const IDB_PROGRESS_KEY = 'bfs_progress';
+
+function idbOpen() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(DB_NAME, DB_VERSION);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains('state')) db.createObjectStore('state');
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function idbGet(key) {
+  const db = await idbOpen();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction('state', 'readonly');
+    const req = tx.objectStore('state').get(key);
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function idbSet(key, value) {
+  const db = await idbOpen();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction('state', 'readwrite');
+    tx.objectStore('state').put(value, key);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+async function idbDelete(key) {
+  const db = await idbOpen();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction('state', 'readwrite');
+    tx.objectStore('state').delete(key);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+// ---- OPFS Helpers (kept as secondary — only works in secure contexts) ----
+async function opfsRead(filename) {
+  try {
+    const root = await navigator.storage.getDirectory();
+    const handle = await root.getFileHandle(filename, { create: false });
+    const file = await handle.getFile();
+    return JSON.parse(await file.text());
+  } catch { return null; }
+}
+
+async function opfsWrite(filename, data) {
+  try {
+    const root = await navigator.storage.getDirectory();
+    const handle = await root.getFileHandle(filename, { create: true });
+    const writable = await handle.createWritable();
+    await writable.write(JSON.stringify(data, null, 2));
+    await writable.close();
+  } catch { /* OPFS not available */ }
+}
+
+// Write cache to both IndexedDB (primary) and OPFS (bonus)
+async function persistCache() {
+  cache.lastModified = new Date().toISOString();
+  cache.categoryLabels = categoryLabels;
+  await Promise.allSettled([
+    idbSet(IDB_CACHE_KEY, cache),
+    opfsWrite(OPFS_CACHE_FILE, cache),
+  ]);
+}
+
+// Read cache: IDB first, OPFS fallback
+async function loadCache() {
+  let data = await idbGet(IDB_CACHE_KEY);
+  if (!data) {
+    data = await opfsRead(OPFS_CACHE_FILE);
+    if (data) await idbSet(IDB_CACHE_KEY, data); // migrate to IDB
+  }
+  return data;
+}
+
+// ---- FSAA Helpers ----
+async function fsaaWriteCache() {
+  if (!bookmarksDirHandle) return;
+  try {
+    const fileHandle = await bookmarksDirHandle.getFileHandle('bookmarks_cache.json', { create: true });
+    const writable = await fileHandle.createWritable();
+    await writable.write(JSON.stringify(cache, null, 2));
+    await writable.close();
+    console.log('[FSAA] Cache written to bookmarks_cache.json');
+  } catch(e) {
+    console.warn('[FSAA] Write failed:', e.message);
+  }
+}
+
+async function fsaaImportCacheFile() {
+  // Let user pick an existing bookmarks_cache.json to load
+  try {
+    const [handle] = await window.showOpenFilePicker({
+      types: [{ description: 'JSON Cache', accept: { 'application/json': ['.json'] } }],
+      multiple: false,
+    });
+    const file = await handle.getFile();
+    const data = JSON.parse(await file.text());
+    if (data.version && data.bookmarks) {
+      cache = data;
+      categoryLabels = cache.categoryLabels || {};
+      return true;
+    }
+  } catch(e) { /* user cancelled */ }
+  return false;
+}
+
+// ---- Bookmark Parser ----
+function parseBookmarkHTML(htmlContent) {
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(htmlContent, 'text/html');
+  const result = [];
+  const folders = doc.querySelectorAll('DL > DT > H3');
+
+  folders.forEach(folderEl => {
+    const folderName = folderEl.textContent.trim();
+    const dl = folderEl.closest('DT')?.querySelector('DL');
+    if (!dl) return;
+    const links = dl.querySelectorAll(':scope > DT > A');
+    links.forEach(a => {
+      const url = a.getAttribute('HREF');
+      const title = a.textContent.trim();
+      const addDate = parseInt(a.getAttribute('ADD_DATE') || '0') * 1000;
+      const icon = a.getAttribute('ICON') || '';
+      if (url && title) {
+        result.push({ url, title, addDate, folder: folderName, icon });
+      }
+    });
+  });
+
+  // Also grab top-level bookmarks (not in any H3 folder)
+  const topLevelLinks = doc.querySelectorAll('DL > DT > A');
+  topLevelLinks.forEach(a => {
+    const url = a.getAttribute('HREF');
+    const title = a.textContent.trim();
+    const addDate = parseInt(a.getAttribute('ADD_DATE') || '0') * 1000;
+    const icon = a.getAttribute('ICON') || '';
+    if (url && title) {
+      result.push({ url, title, addDate, folder: '未分类', icon });
+    }
+  });
+
+  return result;
+}
+
+// ---- Folder Tree Builder ----
+function buildFolderTree() {
+  folderTree = {};
+  for (const bm of bookmarks) {
+    const f = bm.folder || '未分类';
+    if (!folderTree[f]) folderTree[f] = [];
+    folderTree[f].push(bm);
+  }
+}
+
+// ---- Rendering ----
+function renderFolderTree() {
+  domFolderTree.innerHTML = '';
+  const sorted = Object.entries(folderTree).sort((a, b) => a[0].localeCompare(b[0]));
+  for (const [name, bms] of sorted) {
+    const item = document.createElement('div');
+    item.className = 'sidebar-item';
+    if (selectedFolder === name) item.classList.add('active');
+    item.innerHTML = `<span>📁</span> ${escapeHtml(name)} <span class="count">${bms.length}</span>`;
+    item.addEventListener('click', () => {
+      selectedFolder = name;
+      selectedCategory = null;
+      renderFolderTree();
+      renderCategoryList();
+      filterAndRenderCards();
+    });
+    domFolderTree.appendChild(item);
+  }
+}
+
+function renderCategoryList() {
+  domCategoryList.innerHTML = '';
+  const cats = getAllCategories();
+  // "全部" option
+  const allItem = document.createElement('div');
+  allItem.className = 'sidebar-item';
+  if (!selectedCategory && !selectedFolder) allItem.classList.add('active');
+  allItem.innerHTML = `<span>🏷</span> 全部 <span class="count">${bookmarks.length}</span>`;
+  allItem.addEventListener('click', () => {
+    selectedCategory = null;
+    selectedFolder = null;
+    renderCategoryList();
+    renderFolderTree();
+    filterAndRenderCards();
+  });
+  domCategoryList.appendChild(allItem);
+
+  for (const cat of cats) {
+    const item = document.createElement('div');
+    item.className = 'sidebar-item';
+    if (selectedCategory === cat) item.classList.add('active');
+    const count = bookmarks.filter(b => {
+      const entry = cache.bookmarks[b.url];
+      return entry && entry.categories && entry.categories.includes(cat);
+    }).length;
+    item.innerHTML = `<span>🏷</span> ${escapeHtml(cat)} <span class="count">${count}</span>`;
+    item.addEventListener('click', () => {
+      selectedCategory = cat;
+      selectedFolder = null;
+      renderCategoryList();
+      renderFolderTree();
+      filterAndRenderCards();
+    });
+    domCategoryList.appendChild(item);
+  }
+}
+
+function getAllCategories() {
+  const catSet = new Set();
+  for (const bm of bookmarks) {
+    const entry = cache.bookmarks[bm.url];
+    if (entry && entry.categories) {
+      entry.categories.forEach(c => catSet.add(c));
+    }
+  }
+  return [...catSet].sort();
+}
+
+function filterAndRenderCards() {
+  let filtered = [...bookmarks];
+  const searchText = domCardFilter.value.trim().toLowerCase();
+
+  if (selectedFolder) {
+    filtered = filtered.filter(b => (b.folder || '未分类') === selectedFolder);
+  }
+  if (selectedCategory) {
+    filtered = filtered.filter(b => {
+      const entry = cache.bookmarks[b.url];
+      return entry && entry.categories && entry.categories.includes(selectedCategory);
+    });
+  }
+  if (searchText) {
+    filtered = filtered.filter(b => {
+      const entry = cache.bookmarks[b.url];
+      return b.title.toLowerCase().includes(searchText) ||
+             b.url.toLowerCase().includes(searchText) ||
+             (entry && entry.summary && entry.summary.toLowerCase().includes(searchText)) ||
+             (entry && entry.keywords && entry.keywords.some(k => k.toLowerCase().includes(searchText)));
+    });
+  }
+
+  domBookmarkCount.textContent = `${filtered.length} / ${bookmarks.length} 个书签`;
+  renderCards(filtered);
+}
+
+function renderCards(bmList) {
+  domCardGrid.innerHTML = '';
+  if (bmList.length === 0) {
+    domCardGrid.innerHTML = '<div style="text-align:center;padding:40px;color:var(--text-muted);">没有匹配的书签</div>';
+    return;
+  }
+
+  for (const bm of bmList) {
+    const card = createBookmarkCard(bm);
+    domCardGrid.appendChild(card);
+  }
+}
+
+function createBookmarkCard(bm) {
+  const entry = cache.bookmarks[bm.url];
+  const isPending = !entry || !entry.summary;
+  const card = document.createElement('div');
+  card.className = 'bookmark-card';
+  if (isPending) card.classList.add('pending');
+  card.dataset.url = bm.url;
+
+  let html = '';
+  html += `<div class="card-title">${escapeHtml(bm.title)}</div>`;
+  html += `<a class="card-url" href="${escapeHtml(bm.url)}" target="_blank" rel="noopener">${escapeHtml(bm.url)}</a>`;
+
+  if (isPending) {
+    html += `<div class="card-loading">
+      <span>⟳ 分析中</span>
+      <div class="dot-pulse"><span></span><span></span><span></span></div>
+    </div>`;
+  } else {
+    html += `<div class="card-summary">${escapeHtml(entry.summary)}</div>`;
+    if (entry.keywords && entry.keywords.length) {
+      html += `<div class="card-keywords">关键词: ${escapeHtml(entry.keywords.join('; '))}</div>`;
+    }
+    if (entry.categories && entry.categories.length) {
+      html += '<div class="card-categories">';
+      for (const cat of entry.categories) {
+        html += `<span class="card-category-tag" data-category="${escapeHtml(cat)}">${escapeHtml(cat)}</span>`;
+      }
+      html += '</div>';
+    }
+  }
+
+  const hasEmbedding = entry && entry.embedding && entry.embedding.length > 0;
+  const dateStr = bm.addDate ? new Date(bm.addDate).toLocaleDateString('zh-CN') : '';
+  html += `<div class="card-meta">`;
+  if (isPending) {
+    html += `<span style="color:var(--text-muted)">⏳ 待处理</span>`;
+  } else {
+    html += `<span style="color:${hasEmbedding ? 'var(--success)' : 'var(--warning)'}">${hasEmbedding ? '🧬 已向量化' : '⚠ 缺少向量'}</span>`;
+  }
+  html += ` ${dateStr ? ' · 添加于 ' + dateStr : ''}</div>`;
+
+  card.innerHTML = html;
+
+  // Category tag click: filter by that category
+  card.querySelectorAll('.card-category-tag').forEach(tag => {
+    tag.addEventListener('click', (e) => {
+      e.stopPropagation();
+      selectedCategory = tag.dataset.category;
+      selectedFolder = null;
+      renderCategoryList();
+      renderFolderTree();
+      domSidebar.classList.remove('collapsed');
+      filterAndRenderCards();
+    });
+  });
+
+  return card;
+}
+
+function updateBookmarkCardUI(url) {
+  const bm = bookmarkMap[url];
+  if (!bm) return;
+  const oldCard = domCardGrid.querySelector(`[data-url="${CSS.escape(url)}"]`);
+  if (!oldCard) return;
+  const newCard = createBookmarkCard(bm);
+  oldCard.replaceWith(newCard);
+}
+
+// ---- Utils ----
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+// ---- API Clients ----
+async function callDeepSeek(model, messages, maxTokens = 500) {
+  const response = await fetch(`${config.deepseekUrl}/chat/completions`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${config.deepseekKey}`,
+    },
+    body: JSON.stringify({ model, messages, temperature: 0.7, max_tokens: maxTokens }),
+  });
+  if (!response.ok) throw new Error(`DeepSeek ${response.status}: ${await response.text()}`);
+  const data = await response.json();
+  return data.choices?.[0]?.message?.content || '';
+}
+
+async function callOpenAIEmbedding(text) {
+  const response = await fetch(`${config.openaiUrl}/embeddings`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${config.openaiKey}`,
+    },
+    body: JSON.stringify({ model: 'text-embedding-3-small', input: text }),
+  });
+  if (!response.ok) throw new Error(`OpenAI Embedding ${response.status}`);
+  const data = await response.json();
+  return data.data?.[0]?.embedding || null;
+}
+
+// ---- Local Embedding Fallback ----
+let localEmbedder = null;
+let localEmbedderFailed = false;
+let localEmbedderPromise = null;  // serialize concurrent init attempts
+
+function updateModelStatus(state, label) {
+  if (domModelDot) {
+    const colors = { loading: '#e65100', ready: '#2e7d32', failed: '#c62828', none: 'var(--text-muted)' };
+    domModelDot.style.background = colors[state] || colors.none;
+    domModelLabel.textContent = label;
+  }
+}
+
+async function initLocalEmbedder() {
+  if (localEmbedder) return localEmbedder;
+  if (localEmbedderFailed) return null;
+  if (localEmbedderPromise) return localEmbedderPromise; // wait for in-progress init
+
+  localEmbedderPromise = (async () => {
+    updateModelStatus('loading', '加载本地模型...');
+    try {
+      const mod = await import('https://cdn.jsdelivr.net/npm/@xenova/transformers@2.16.1/dist/transformers.min.js');
+      mod.env.allowLocalModels = true;
+      mod.env.allowRemoteModels = false;
+      mod.env.localModelPath = './models/';
+      localEmbedder = await mod.pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2');
+      updateModelStatus('ready', '模型就绪 (本地 384维)');
+      return localEmbedder;
+    } catch(e) {
+      console.warn('Local embedding model failed to load:', e.message);
+      localEmbedderFailed = true;
+      updateModelStatus('failed', '模型加载失败');
+      return null;
+    } finally {
+      localEmbedderPromise = null;
+    }
+  })();
+
+  return localEmbedderPromise;
+}
+
+async function getLocalEmbedding(text) {
+  if (!text) return null;
+  text = String(text).trim().substring(0, 512);
+  if (!text) return null;
+
+  const embedder = await initLocalEmbedder();
+  if (!embedder) return null;
+
+  try {
+    const output = await embedder(text, { pooling: 'mean', normalize: true });
+    return Array.from(output.data);
+  } catch(e) {
+    console.warn('Local embedding inference failed:', e.message);
+    return null;
+  }
+}
+
+async function getEmbedding(text) {
+  if (!text) return null;
+  if (config.openaiKey) {
+    try {
+      const emb = await callOpenAIEmbedding(text);
+      if (emb) updateModelStatus('ready', 'OpenAI (1536维)');
+      return emb;
+    }
+    catch(e) { console.warn('OpenAI embedding failed, falling back to local:', e.message); }
+  }
+  return getLocalEmbedding(text);
+}
+
+// ---- Summary Generation ----
+async function generateSummary(url, title) {
+  const prompt = `请为以下网站提供一个简洁的摘要(中文)和关键词:
+网站标题: ${title}
+网站URL: ${url}
+
+要求:
+1. 第一行是用分号分隔的关键词(3-5个)
+2. 第二行开始是用1-2句话概括网站的主要内容或功能
+3. 保持语言简洁专业
+
+示例:
+编程;教程;Python;入门
+菜鸟教程是一个提供各种编程语言基础教程的网站，适合初学者快速入门学习。`;
+
+  const fullResponse = await callDeepSeek('deepseek-v4-flash', [{ role: 'user', content: prompt }], 150);
+  const lines = fullResponse.split('\n').filter(l => l.trim());
+  const keywords = lines[0] ? lines[0].split(';').map(k => k.trim()).filter(Boolean) : [];
+  const summary = lines.slice(1).join('\n').trim() || fullResponse;
+  return { keywords, summary };
+}
+
+// ---- Clustering ----
+async function runClustering() {
+  const entries = Object.entries(cache.bookmarks).filter(([, v]) => v.embedding && v.summary);
+  if (entries.length < CLUSTER_TRIGGER_COUNT) return;
+
+  const vectors = entries.map(([, v]) => v.embedding);
+  const urls = entries.map(([url]) => url);
+
+  // Simple k-means
+  const maxK = Math.min(10, Math.floor(entries.length / 5));
+  let bestK = 3, bestScore = -Infinity;
+  let bestClusters = null;
+
+  for (let k = 3; k <= maxK; k++) {
+    const { clusters, score } = kMeans(vectors, k, 10);
+    if (score > bestScore) { bestScore = score; bestK = k; bestClusters = clusters; }
+  }
+
+  if (!bestClusters) return;
+
+  // Assign cluster IDs to bookmarks
+  const clusterAssignments = {}; // clusterId → [url, ...]
+  for (let i = 0; i < urls.length; i++) {
+    const cid = `cluster_${bestClusters[i]}`;
+    if (!clusterAssignments[cid]) clusterAssignments[cid] = [];
+    clusterAssignments[cid].push(urls[i]);
+  }
+
+  // Generate labels for new/changed clusters using Pro
+  const newLabels = {};
+  for (const [cid, clusterUrls] of Object.entries(clusterAssignments)) {
+    if (categoryLabels[cid]) { newLabels[cid] = categoryLabels[cid]; continue; }
+    // Generate label from sample summaries
+    const samples = clusterUrls.slice(0, 5).map(u => {
+      const e = cache.bookmarks[u];
+      return `- ${e.summary?.substring(0, 80)} (关键词: ${e.keywords?.join(',')})`;
+    }).join('\n');
+    try {
+      const label = await callDeepSeek('deepseek-v4-pro', [{
+        role: 'user',
+        content: `根据以下网站摘要，为这个分类生成一个简短的2-4字中文标签名（如：开发工具、学习资源、AI技术、设计素材等）。只输出标签名，不要其他内容。\n\n${samples}`,
+      }], 20);
+      newLabels[cid] = label.trim() || `分类${cid}`;
+    } catch { newLabels[cid] = `分类${cid}`; }
+  }
+
+  // Update
+  for (const [cid, label] of Object.entries(newLabels)) {
+    categoryLabels[cid] = label;
+  }
+  for (const [cid, clusterUrls] of Object.entries(clusterAssignments)) {
+    for (const url of clusterUrls) {
+      if (!cache.bookmarks[url].categories) cache.bookmarks[url].categories = [];
+      cache.bookmarks[url].categories = [categoryLabels[cid]];
+    }
+  }
+
+  await persistCache();
+  renderCategoryList();
+}
+
+// k-means implementation
+function kMeans(data, k, maxIter = 10) {
+  const n = data.length, d = data[0].length;
+  // Initialize centroids with k-means++
+  const centroids = [data[Math.floor(Math.random() * n)]];
+  for (let i = 1; i < k; i++) {
+    const dists = data.map(p => Math.min(...centroids.map(c => euclideanSq(p, c))));
+    const sum = dists.reduce((a, b) => a + b, 0);
+    let r = Math.random() * sum, idx = 0;
+    for (; idx < n && r > 0; idx++) r -= dists[idx];
+    centroids.push(data[Math.min(idx, n - 1)]);
+  }
+
+  let clusters = new Array(n).fill(0);
+  for (let iter = 0; iter < maxIter; iter++) {
+    let changed = false;
+    for (let i = 0; i < n; i++) {
+      let minDist = Infinity, minIdx = 0;
+      for (let j = 0; j < k; j++) {
+        const dist = euclideanSq(data[i], centroids[j]);
+        if (dist < minDist) { minDist = dist; minIdx = j; }
+      }
+      if (clusters[i] !== minIdx) { clusters[i] = minIdx; changed = true; }
+    }
+    if (!changed) break;
+    // Recompute centroids
+    for (let j = 0; j < k; j++) {
+      const members = data.filter((_, i) => clusters[i] === j);
+      if (members.length) centroids[j] = members[0].map((_, dim) => members.reduce((s, p) => s + p[dim], 0) / members.length);
+    }
+  }
+
+  // Silhouette score (simplified)
+  let score = 0;
+  for (let i = 0; i < n; i++) {
+    const a = averageDistToCluster(data[i], data.filter((_, j) => clusters[j] === clusters[i]));
+    const b = Math.min(...Array.from({length: k}, (_, cid) => {
+      if (cid === clusters[i]) return Infinity;
+      return averageDistToCluster(data[i], data.filter((_, j) => clusters[j] === cid));
+    }));
+    score += (b - a) / Math.max(a, b);
+  }
+  score /= n;
+  return { clusters: [...clusters], score };
+}
+
+function euclideanSq(a, b) {
+  let sum = 0;
+  for (let i = 0; i < a.length; i++) sum += (a[i] - b[i]) ** 2;
+  return sum;
+}
+
+function averageDistToCluster(point, cluster) {
+  if (cluster.length === 0) return Infinity;
+  return cluster.reduce((s, p) => s + Math.sqrt(euclideanSq(point, p)), 0) / cluster.length;
+}
+
+// ---- Cosine Similarity Search ----
+function cosineSimilarity(a, b) {
+  let dot = 0, normA = 0, normB = 0;
+  for (let i = 0; i < a.length; i++) {
+    dot += a[i] * b[i];
+    normA += a[i] * a[i];
+    normB += b[i] * b[i];
+  }
+  return dot / (Math.sqrt(normA) * Math.sqrt(normB) + 1e-10);
+}
+
+function vectorSearch(queryEmbedding, topK = SEARCH_TOP_K) {
+  const scored = [];
+  for (const [url, entry] of Object.entries(cache.bookmarks)) {
+    if (!entry.embedding) continue;
+    const sim = cosineSimilarity(queryEmbedding, entry.embedding);
+    scored.push({ url, sim, summary: entry.summary, keywords: entry.keywords });
+  }
+  scored.sort((a, b) => b.sim - a.sim);
+  return scored.slice(0, topK);
+}
+
+// ---- Background Queue ----
+let pendingUrls = [];
+let activeCount = 0;
+let completedCount = 0;
+let totalCount = 0;
+let alreadyDoneCount = 0;  // items already processed before queue started
+
+const BATCH_SIZE = 100;
+const BATCH_THRESHOLD = 500;
+
+// Process a single batch of URLs with concurrent workers
+async function processBatch(urls) {
+  pendingUrls = [...urls];
+  const batchTotal = urls.length;
+  let batchDone = 0;
+
+  const worker = async () => {
+    while (pendingUrls.length > 0 && activeCount < CONCURRENT_LIMIT) {
+      const url = pendingUrls.shift();
+      if (cache.bookmarks[url]?.summary) { batchDone++; completedCount++; updateProgress(); continue; }
+      activeCount++;
+      try {
+        const bm = bookmarkMap[url];
+        if (!bm) { activeCount--; continue; }
+        domProgressLabel.textContent = `处理中 (第${completedCount - alreadyDoneCount + 1}个)`;
+        const { summary, keywords } = await generateSummary(url, bm.title);
+        let embedding = null;
+        try { embedding = await getEmbedding(`${bm.title} ${summary} ${keywords.join(' ')}`); }
+        catch(e) { console.warn('Embedding failed for', url, e.message); }
+        cache.bookmarks[url] = { summary, keywords, categories: [], embedding, generatedAt: new Date().toISOString() };
+        batchDone++;
+        completedCount++;
+        updateBookmarkCardUI(url);
+        updateProgress();
+        await persistCache();
+      } catch(e) {
+        console.error('Generate failed for', url, e.message);
+        batchDone++;
+        completedCount++;
+        updateProgress();
+      } finally {
+        activeCount--;
+      }
+    }
+  };
+
+  const workers = [];
+  for (let i = 0; i < CONCURRENT_LIMIT; i++) workers.push(worker());
+  await Promise.all(workers);
+  return batchDone;
+}
+
+async function startBackgroundQueue(urls) {
+  totalCount = urls.length;
+  alreadyDoneCount = urls.filter(u => cache.bookmarks[u]?.summary).length;
+  completedCount = alreadyDoneCount;
+  activeCount = 0;
+
+  domProgressArea.classList.remove('hidden');
+  updateProgress();
+
+  if (queueRunning) return;
+  queueRunning = true;
+
+  await idbSet(IDB_PROGRESS_KEY, { pendingUrls: [], completedCount, totalCount, alreadyDoneCount });
+
+  // Filter unprocessed
+  const unprocessed = urls.filter(u => !cache.bookmarks[u]?.summary);
+  const newCount = unprocessed.length;
+
+  if (newCount > BATCH_THRESHOLD) {
+    // Batch mode: process 100 at a time, cluster after each batch
+    domProgressLabel.textContent = `分批处理中 (共${newCount}个, 每批${BATCH_SIZE}个)`;
+    const batches = [];
+    for (let i = 0; i < unprocessed.length; i += BATCH_SIZE) {
+      batches.push(unprocessed.slice(i, i + BATCH_SIZE));
+    }
+    for (let bi = 0; bi < batches.length; bi++) {
+      domProgressLabel.textContent = `批次 ${bi + 1}/${batches.length} — 处理中`;
+      await processBatch(batches[bi]);
+      // Cluster after each batch
+      domProgressLabel.textContent = `批次 ${bi + 1}/${batches.length} — 聚类中`;
+      await runClustering();
+      renderCategoryList();
+      await idbSet(IDB_PROGRESS_KEY, { pendingUrls: [], completedCount, totalCount, alreadyDoneCount });
+    }
+  } else {
+    // Normal mode: all at once, cluster every 20 items handled in worker via old logic
+    // For simplicity, use batch mode too but in one batch, then cluster at end
+    domProgressLabel.textContent = '处理中';
+    await processBatch(unprocessed);
+  }
+
+  // All done
+  queueRunning = false;
+  domProgressLabel.textContent = '已完成';
+  updateProgress();
+  await runClustering();
+  renderCategoryList();
+  renderFolderTree();
+  filterAndRenderCards();
+
+  await idbSet(IDB_PROGRESS_KEY, { pendingUrls: [], completedCount, totalCount });
+  setTimeout(() => { domProgressArea.classList.add('hidden'); }, 4000);
+}
+
+function updateProgress() {
+  const done = completedCount + activeCount;
+  const pct = totalCount > 0 ? Math.round((done / totalCount) * 100) : 0;
+  domProgressFill.style.width = `${pct}%`;
+  domProgressText.textContent = `${completedCount}/${totalCount}`;
+  if (queueRunning || pendingUrls.length > 0) {
+    domProgressArea.classList.remove('hidden');
+  }
+}
+
+// ---- Chat ----
+let chatHistory = []; // { role, content, recommendations?: [] }
+
+function openChat() {
+  domChatPanel.classList.remove('collapsed');
+  domChatFab.classList.remove('visible');
+  domChatInput.focus();
+}
+
+function closeChat() {
+  domChatPanel.classList.add('collapsed');
+  domChatFab.classList.add('visible');
+}
+
+domChatFab.addEventListener('click', openChat);
+domChatClose.addEventListener('click', closeChat);
+
+function addChatMessage(role, content, recommendations) {
+  chatHistory.push({ role, content, recommendations });
+  const msg = document.createElement('div');
+  msg.className = `chat-msg ${role}`;
+  let html = escapeHtml(content);
+  if (recommendations && recommendations.length) {
+    for (const rec of recommendations) {
+      const bm = bookmarkMap[rec.url];
+      html += `<div class="rec-card" data-url="${escapeHtml(rec.url)}">
+        <div class="rec-title">${escapeHtml(rec.title || bm?.title || rec.url)}</div>
+        <div class="rec-reason">${escapeHtml(rec.reason || '')}</div>
+      </div>`;
+    }
+  }
+  msg.innerHTML = html;
+
+  // Click on recommendation card to scroll to that bookmark
+  msg.querySelectorAll('.rec-card').forEach(card => {
+    card.addEventListener('click', () => {
+      const url = card.dataset.url;
+      closeChat();
+      // Find and scroll to card
+      const target = domCardGrid.querySelector(`[data-url="${CSS.escape(url)}"]`);
+      if (target) { target.scrollIntoView({ behavior: 'smooth', block: 'center' }); target.style.boxShadow = '0 0 0 3px var(--primary)'; setTimeout(() => target.style.boxShadow = '', 2000); }
+    });
+  });
+
+  domChatMessages.appendChild(msg);
+  domChatMessages.scrollTop = domChatMessages.scrollHeight;
+}
+
+async function sendChatMessage() {
+  const query = domChatInput.value.trim();
+  if (!query || !config.deepseekKey) return;
+  domChatInput.value = '';
+  domChatSend.disabled = true;
+  addChatMessage('user', query);
+
+  try {
+    // Vectorize query
+    const queryEmbedding = await getEmbedding(query);
+    console.log('[Chat] embedding:', queryEmbedding ? `${queryEmbedding.length}维` : 'null');
+    if (!queryEmbedding) {
+      addChatMessage('assistant', 'Embedding 模型未就绪，请等待模型加载完成（顶部栏绿色圆点）。');
+      return;
+    }
+
+    // Search
+    const topResults = vectorSearch(queryEmbedding);
+    console.log('[Chat] 向量检索命中:', topResults.length, 'top1 sim:', topResults[0]?.sim?.toFixed(3));
+
+    if (topResults.length === 0) {
+      const hasSummaries = Object.values(cache.bookmarks).filter(e => e.summary).length;
+      const hasEmbeddings = Object.values(cache.bookmarks).filter(e => e.embedding).length;
+      addChatMessage('assistant', `无可搜索书签。当前状态：${hasSummaries} 个有摘要，${hasEmbeddings} 个有向量。请等待后台处理。`);
+      return;
+    }
+
+    // Build context for Pro
+    const recentContext = chatHistory.slice(-7).map(m => `${m.role}: ${m.content}`).join('\n');
+    const topBookmarksText = topResults.map((r, i) =>
+      `${i+1}. ${bookmarkMap[r.url]?.title || r.url}\n   URL: ${r.url}\n   摘要: ${r.summary}\n   关键词: ${(r.keywords||[]).join(',')}`
+    ).join('\n\n');
+
+    console.log('[Chat] Pro请求中...');
+    const response = await callDeepSeek('deepseek-v4-pro', [
+      { role: 'system', content: '你是一个书签推荐助手。根据用户问题从提供的书签列表中推荐3-5个最相关的网站。每个推荐包含标题和简短理由。格式：标题：理由\nURL\n---' },
+      { role: 'user', content: `对话历史:\n${recentContext}\n\n用户当前问题: ${query}\n\n可用书签（按相关度排序，共${topResults.length}个）:\n${topBookmarksText}\n\n请推荐3-5个最相关的书签。` },
+    ], 600);
+    console.log('[Chat] Pro响应:', response.substring(0, 200));
+
+    // Parse recommendations
+    const recommendations = [];
+    const parts = response.split('---').filter(p => p.trim());
+    console.log('[Chat] 解析为', parts.length, '个分段');
+    for (const part of parts) {
+      const lines = part.trim().split('\n').filter(l => l.trim());
+      console.log('[Chat] 分段行数:', lines.length, '首行:', lines[0]?.substring(0, 60));
+      if (lines.length >= 2) {
+        const titleReason = lines[0].trim();
+        const urlLine = lines[1].trim();
+        const colonIdx = titleReason.indexOf('：') !== -1 ? titleReason.indexOf('：') : titleReason.indexOf(':');
+        const title = colonIdx > 0 ? titleReason.substring(0, colonIdx).trim() : titleReason;
+        const reason = colonIdx > 0 ? titleReason.substring(colonIdx + 1).trim() : '';
+        if (urlLine.startsWith('http')) {
+          recommendations.push({ title, reason, url: urlLine });
+          console.log('[Chat] 添加推荐:', title, urlLine);
+        } else {
+          console.log('[Chat] URL行不符合:', urlLine);
+        }
+      }
+    }
+
+    if (recommendations.length === 0) {
+      console.warn('[Chat] 解析失败，原始响应:', response);
+      addChatMessage('assistant', `搜索完成但未能解析推荐结果。原始响应：\n${response.substring(0, 500)}`);
+    } else {
+      addChatMessage('assistant', '为你找到以下推荐：', recommendations);
+    }
+  } catch(e) {
+    addChatMessage('assistant', `搜索失败: ${e.message}`);
+    console.error(e);
+  } finally {
+    domChatSend.disabled = false;
+  }
+}
+
+domChatSend.addEventListener('click', sendChatMessage);
+domChatInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChatMessage(); }
+});
+domChatInput.addEventListener('input', () => {
+  domChatSend.disabled = !domChatInput.value.trim();
+});
+
+// ---- Sidebar Toggle ----
+domToggleSidebar.addEventListener('click', () => {
+  domSidebar.classList.toggle('collapsed');
+});
+
+// ---- Card Filter ----
+domCardFilter.addEventListener('input', filterAndRenderCards);
+
+// ---- Export / Import Cache Buttons ----
+$('#btn-export-cache').addEventListener('click', async () => {
+  try {
+    const json = JSON.stringify(cache, null, 2);
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'bookmarks_cache.json';
+    a.click();
+    URL.revokeObjectURL(url);
+  } catch(e) { alert('导出缓存失败: ' + e.message); }
+});
+
+$('#btn-import-cache').addEventListener('click', async () => {
+  try {
+    const success = await fsaaImportCacheFile();
+    if (success) {
+      categoryLabels = cache.categoryLabels || {};
+      renderCategoryList();
+      renderFolderTree();
+      filterAndRenderCards();
+      // Re-queue unprocessed
+      const allUrls = bookmarks.map(b => b.url);
+      if (allUrls.length > 0) startBackgroundQueue(allUrls);
+    }
+  } catch(e) { alert('导入缓存失败: ' + e.message); }
+});
+
+$('#btn-export-html').addEventListener('click', exportBookmarksHTML);
+
+// ---- Export ----
+async function exportBookmarksHTML() {
+  let html = `<!DOCTYPE NETSCAPE-Bookmark-file-1>
+<META HTTP-EQUIV="Content-Type" CONTENT="text/html; charset=UTF-8">
+<TITLE>Bookmarks (BFS Enhanced)</TITLE>
+<H1>Bookmarks</H1>
+<DL><p>
+`;
+
+  const folders = {};
+  for (const bm of bookmarks) {
+    const f = bm.folder || '未分类';
+    if (!folders[f]) folders[f] = [];
+    folders[f].push(bm);
+  }
+
+  for (const [folder, bms] of Object.entries(folders)) {
+    html += `    <DT><H3>${escapeHtml(folder)}</H3>\n    <DL><p>\n`;
+    for (const bm of bms) {
+      const entry = cache.bookmarks[bm.url];
+      const desc = entry ? `BFS_SUMMARY: ${entry.summary || ''} | BFS_KEYWORDS: ${(entry.keywords||[]).join(';')} | BFS_CATEGORIES: ${(entry.categories||[]).join(';')}` : '';
+      html += `        <DT><A HREF="${escapeHtml(bm.url)}" ADD_DATE="${Math.floor(bm.addDate/1000)}" BFS_DESC="${escapeHtml(desc)}">${escapeHtml(bm.title)}</A>\n`;
+    }
+    html += `    </DL><p>\n`;
+  }
+
+  html += '</DL>\n';
+
+  const blob = new Blob([html], { type: 'text/html' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'bookmarks_enhanced.html';
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+// ---- Config UI ----
+domConfigToggle.addEventListener('click', () => {
+  domConfigPanel.classList.toggle('collapsed');
+});
+
+domBtnSaveConfig.addEventListener('click', () => {
+  saveConfig();
+  domConfigPanel.classList.add('collapsed');
+});
+
+async function triggerImport() {
+  if (!config.deepseekKey) { alert('请先配置 DeepSeek API Key'); domConfigPanel.classList.remove('collapsed'); return; }
+  try {
+    const [fileHandle] = await window.showOpenFilePicker({
+      types: [{ description: 'Bookmark HTML', accept: { 'text/html': ['.html', '.htm'] } }],
+      multiple: false,
+    });
+    const file = await fileHandle.getFile();
+    const content = await file.text();
+
+    // Parse
+    bookmarks = parseBookmarkHTML(content);
+    bookmarkMap = {};
+    for (const bm of bookmarks) bookmarkMap[bm.url] = bm;
+    buildFolderTree();
+
+    // Load existing cache from OPFS
+    const savedCache = await loadCache();
+    if (savedCache?.bookmarks) { cache = savedCache; categoryLabels = cache.categoryLabels || {}; }
+
+    // Switch to main view
+    domLanding.classList.add('hidden');
+    domApp.classList.remove('hidden');
+    domChatFab.classList.add('visible');
+
+    renderFolderTree();
+    renderCategoryList();
+    filterAndRenderCards();
+
+    // Queue processing — worker skips already-processed URLs
+    const allUrls = bookmarks.map(b => b.url);
+    startBackgroundQueue(allUrls);
+  } catch(e) {
+    if (e.name === 'AbortError') return;
+    console.error('Import failed:', e);
+    alert('导入失败: ' + e.message);
+  }
+}
+
+// ---- Landing: Import Button ----
+domBtnImport.addEventListener('click', triggerImport);
+
+// ---- Resume Detection ----
+async function checkResume() {
+  const progress = await idbGet(IDB_PROGRESS_KEY);
+  if (progress && progress.pendingUrls && progress.pendingUrls.length > 0) {
+    domResumePrompt.classList.remove('hidden');
+    domResumePrompt.innerHTML = `
+      <p>📋 检测到上次未完成的任务</p>
+      <p style="font-size:13px;color:var(--text-secondary)">已处理 ${progress.completedCount}/${progress.totalCount} 个书签</p>
+      <div class="btn-row">
+        <button class="btn-primary" id="btn-resume">继续上次</button>
+        <button class="btn-secondary" id="btn-restart">重新开始</button>
+      </div>
+    `;
+
+    domResumePrompt.querySelector('#btn-resume').addEventListener('click', async () => {
+      if (!config.deepseekKey) { alert('请先配置 DeepSeek API Key'); domConfigPanel.classList.remove('collapsed'); return; }
+      domResumePrompt.classList.add('hidden');
+      await triggerImport();
+    });
+
+    domResumePrompt.querySelector('#btn-restart').addEventListener('click', async () => {
+      await idbSet(IDB_PROGRESS_KEY, { pendingUrls: [], completedCount: 0, totalCount: 0 });
+      domResumePrompt.classList.add('hidden');
+    });
+  }
+}
+
+// ---- Init ----
+async function init() {
+  loadConfig();
+  await checkResume();
+
+  // If bookmark file path is passed via URL hash or stored, auto-reopen?
+  // For now, always show landing until user imports.
+}
+
+init();
+</script>
+</body>
+</html>

@@ -1,0 +1,1275 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+	<head>
+		<meta charset="UTF-8">
+		<meta name="viewport" content="width=device-width, initial-scale=1.0">
+		<title>书签可视化工具</title>
+		<style>
+			:root {
+				--primary-color: #4a6fa5;
+				--secondary-color: #166088;
+				--background-color: #f5f7fa;
+				--card-color: #ffffff;
+				--text-color: #333333;
+				--shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+				--selected-color: #e3f2fd;
+			}
+
+			body {
+				font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+				background-color: var(--background-color);
+				color: var(--text-color);
+				margin: 0;
+				padding: 20px;
+				line-height: 1.6;
+			}
+
+			.container {
+				max-width: 1200px;
+				margin: 0 auto;
+			}
+
+			header {
+				text-align: center;
+				margin-bottom: 30px;
+				padding: 20px 0;
+				border-bottom: 1px solid #e1e4e8;
+			}
+
+			h1 {
+				color: var(--primary-color);
+				margin: 0;
+			}
+
+			.bookmark-folder {
+				margin-bottom: 20px;
+			}
+
+			.folder-title {
+				background-color: var(--primary-color);
+				color: white;
+				padding: 10px 15px;
+				border-radius: 5px;
+				cursor: pointer;
+				display: flex;
+				justify-content: space-between;
+				align-items: center;
+				box-shadow: var(--shadow);
+				transition: all 0.3s ease;
+			}
+
+			.folder-title:hover {
+				background-color: var(--secondary-color);
+			}
+
+			.folder-title::after {
+				content: "▼";
+				font-size: 12px;
+				transition: transform 0.3s ease;
+			}
+
+			.folder-title.collapsed::after {
+				transform: rotate(-90deg);
+			}
+
+			.bookmarks-container {
+				display: grid;
+				grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+				gap: 20px;
+				padding: 20px 0;
+			}
+
+			.bookmark-card {
+				background-color: var(--card-color);
+				border-radius: 8px;
+				box-shadow: var(--shadow);
+				overflow: hidden;
+				transition: all 0.3s ease;
+				position: relative;
+			}
+
+			.bookmark-card:hover {
+				transform: translateY(-5px);
+				box-shadow: 0 10px 20px rgba(0, 0, 0, 0.15);
+			}
+
+			.bookmark-card.selected {
+				background-color: var(--selected-color);
+				border: 2px solid var(--primary-color);
+			}
+
+			.bookmark-checkbox {
+				position: absolute;
+				top: 10px;
+				right: 10px;
+				width: 18px;
+				height: 18px;
+				z-index: 1;
+			}
+
+			.bookmark-content {
+				padding: 15px;
+			}
+
+			.bookmark-title {
+				font-weight: bold;
+				margin-bottom: 10px;
+				color: var(--primary-color);
+				font-size: 18px;
+			}
+
+			.bookmark-link {
+				display: inline-block;
+				color: var(--secondary-color);
+				text-decoration: none;
+				margin-bottom: 10px;
+				word-break: break-all;
+			}
+
+			.bookmark-link:hover {
+				text-decoration: underline;
+			}
+
+			.bookmark-description {
+				font-size: 14px;
+				color: #666;
+				margin-top: 10px;
+				padding-top: 10px;
+				border-top: 1px dashed #e1e4e8;
+			}
+
+			.bookmark-keywords {
+				font-size: 12px;
+				color: #888;
+				margin-top: 5px;
+				font-style: italic;
+			}
+
+			.bookmark-meta {
+				font-size: 12px;
+				color: #999;
+				margin-top: 10px;
+				display: flex;
+				justify-content: space-between;
+			}
+
+			.loading {
+				text-align: center;
+				padding: 20px;
+				color: #666;
+			}
+
+			.spinner {
+				border: 4px solid rgba(0, 0, 0, 0.1);
+				border-radius: 50%;
+				border-top: 4px solid var(--primary-color);
+				width: 30px;
+				height: 30px;
+				animation: spin 1s linear infinite;
+				margin: 0 auto 10px;
+			}
+
+			@keyframes spin {
+				0% {
+					transform: rotate(0deg);
+				}
+
+				100% {
+					transform: rotate(360deg);
+				}
+			}
+
+			.file-input {
+				margin: 20px auto;
+				text-align: center;
+			}
+
+			.file-input label {
+				display: inline-block;
+				background-color: var(--primary-color);
+				color: white;
+				padding: 10px 15px;
+				border-radius: 5px;
+				cursor: pointer;
+				transition: background-color 0.3s ease;
+			}
+
+			.file-input label:hover {
+				background-color: var(--secondary-color);
+			}
+
+			.file-input input[type="file"] {
+				display: none;
+			}
+
+			.no-bookmarks {
+				text-align: center;
+				padding: 40px;
+				color: #666;
+				font-style: italic;
+			}
+
+			.error-message {
+				color: #d32f2f;
+				font-size: 14px;
+			}
+
+			.welcome-message {
+				text-align: center;
+				padding: 40px;
+				color: #666;
+			}
+
+			.action-buttons {
+				display: flex;
+				justify-content: center;
+				gap: 10px;
+				margin: 20px 0;
+				flex-wrap: wrap;
+			}
+
+			.action-button {
+				background-color: var(--primary-color);
+				color: white;
+				border: none;
+				padding: 10px 15px;
+				border-radius: 5px;
+				cursor: pointer;
+				transition: background-color 0.3s ease;
+			}
+
+			.action-button:hover {
+				background-color: var(--secondary-color);
+			}
+
+			.action-button:disabled {
+				background-color: #cccccc;
+				cursor: not-allowed;
+			}
+
+			.progress-container {
+				width: 100%;
+				margin: 20px 0;
+				display: none;
+			}
+
+			.progress-bar {
+				height: 20px;
+				background-color: #e0e0e0;
+				border-radius: 10px;
+				overflow: hidden;
+			}
+
+			.progress {
+				height: 100%;
+				background-color: var(--primary-color);
+				width: 0%;
+				transition: width 0.3s ease;
+			}
+
+			.progress-text {
+				text-align: center;
+				margin-top: 5px;
+				font-size: 14px;
+				color: #666;
+			}
+
+			.batch-status {
+				text-align: center;
+				margin-top: 10px;
+				font-size: 14px;
+				color: var(--primary-color);
+			}
+
+			.api-config {
+				background-color: #fff;
+				padding: 20px;
+				border-radius: 8px;
+				box-shadow: var(--shadow);
+				margin-bottom: 20px;
+				max-width: 600px;
+				margin-left: auto;
+				margin-right: auto;
+			}
+
+			.api-config h2 {
+				margin-top: 0;
+				color: var(--primary-color);
+				text-align: center;
+			}
+
+			.form-group {
+				margin-bottom: 15px;
+			}
+
+			.form-group label {
+				display: block;
+				margin-bottom: 5px;
+				font-weight: bold;
+			}
+
+			.form-group input {
+				width: 100%;
+				padding: 8px;
+				border: 1px solid #ddd;
+				border-radius: 4px;
+				box-sizing: border-box;
+			}
+
+			.search-container {
+				background-color: #fff;
+				padding: 20px;
+				border-radius: 8px;
+				box-shadow: var(--shadow);
+				margin-bottom: 20px;
+				max-width: 600px;
+				margin-left: auto;
+				margin-right: auto;
+			}
+
+			.search-container h2 {
+				margin-top: 0;
+				color: var(--primary-color);
+				text-align: center;
+			}
+
+			.search-form {
+				display: flex;
+				gap: 10px;
+			}
+
+			.search-input {
+				flex-grow: 1;
+				padding: 10px;
+				border: 1px solid #ddd;
+				border-radius: 4px;
+			}
+
+			.search-button {
+				background-color: var(--primary-color);
+				color: white;
+				border: none;
+				padding: 10px 15px;
+				border-radius: 4px;
+				cursor: pointer;
+			}
+
+			.search-button:hover {
+				background-color: var(--secondary-color);
+			}
+
+			.search-results {
+				margin-top: 20px;
+			}
+
+			.recommendation {
+				background-color: #e8f5e9;
+				padding: 15px;
+				border-radius: 8px;
+				margin-bottom: 15px;
+			}
+
+			.recommendation-title {
+				font-weight: bold;
+				color: var(--primary-color);
+				margin-bottom: 10px;
+			}
+
+			.recommendation-reason {
+				margin-bottom: 10px;
+			}
+
+			.recommendation-link {
+				display: inline-block;
+				color: var(--secondary-color);
+				text-decoration: none;
+			}
+
+			.recommendation-link:hover {
+				text-decoration: underline;
+			}
+
+			.hidden {
+				display: none;
+			}
+		</style>
+	</head>
+	<body>
+		<div class="container">
+			<header>
+				<h1>书签可视化工具</h1>
+			</header>
+
+			<div class="api-config" id="api-config">
+				<h2>API 配置</h2>
+				<div class="form-group">
+					<label for="api-key">DeepSeek API 密钥</label>
+					<input type="password" id="api-key" placeholder="输入您的DeepSeek API密钥">
+				</div>
+				<div class="form-group">
+					<label for="api-url">DeepSeek API 端点</label>
+					<input type="text" id="api-url" placeholder="输入API端点URL"
+						value="https://api.deepseek.com/v1/chat/completions">
+				</div>
+				<div class="action-buttons">
+					<button id="save-api-btn" class="action-button">保存配置</button>
+				</div>
+			</div>
+
+			<div class="file-input hidden" id="file-input-section">
+				<label for="bookmark-file">选择书签文件</label>
+				<input type="file" id="bookmark-file" accept=".html">
+			</div>
+
+			<div class="search-container hidden" id="search-section">
+				<h2>搜索书签</h2>
+				<div class="search-form">
+					<input type="text" id="search-query" class="search-input" placeholder="输入您的需求，例如：'我想学习JavaScript'">
+					<button id="search-btn" class="search-button">搜索</button>
+				</div>
+				<div class="search-results" id="search-results"></div>
+			</div>
+
+			<div id="action-area" class="hidden">
+				<div class="action-buttons">
+					<button id="select-all-btn" class="action-button">全选</button>
+					<button id="deselect-all-btn" class="action-button">取消全选</button>
+					<button id="get-summaries-btn" class="action-button">获取选中摘要</button>
+					<button id="show-search-btn" class="action-button">搜索书签</button>
+				</div>
+				<div class="progress-container" id="progress-container">
+					<div class="progress-bar">
+						<div class="progress" id="progress-bar"></div>
+					</div>
+					<div class="progress-text" id="progress-text">0/0</div>
+				</div>
+				<div class="batch-status" id="batch-status"></div>
+			</div>
+
+			<div id="bookmark-display">
+				<div class="welcome-message">
+					<p>请先配置API密钥和端点，然后选择书签HTML文件</p>
+					<p>通常可以从浏览器导出书签为HTML文件</p>
+				</div>
+			</div>
+		</div>
+
+		<script>
+			document.addEventListener('DOMContentLoaded', function() {
+				// DOM元素
+				const apiConfigSection = document.getElementById('api-config');
+				const fileInputSection = document.getElementById('file-input-section');
+				const searchSection = document.getElementById('search-section');
+				const apiKeyInput = document.getElementById('api-key');
+				const apiUrlInput = document.getElementById('api-url');
+				const saveApiBtn = document.getElementById('save-api-btn');
+				const fileInput = document.getElementById('bookmark-file');
+				const bookmarkDisplay = document.getElementById('bookmark-display');
+				const actionArea = document.getElementById('action-area');
+				const selectAllBtn = document.getElementById('select-all-btn');
+				const deselectAllBtn = document.getElementById('deselect-all-btn');
+				const getSummariesBtn = document.getElementById('get-summaries-btn');
+				const showSearchBtn = document.getElementById('show-search-btn');
+				const progressContainer = document.getElementById('progress-container');
+				const progressBar = document.getElementById('progress-bar');
+				const progressText = document.getElementById('progress-text');
+				const batchStatus = document.getElementById('batch-status');
+				const searchQueryInput = document.getElementById('search-query');
+				const searchBtn = document.getElementById('search-btn');
+				const searchResults = document.getElementById('search-results');
+
+				// 状态变量
+				let selectedBookmarks = new Set();
+				let allBookmarkCards = [];
+				let bookmarkCache = {};
+				let DEEPSEEK_API_KEY = '';
+				let DEEPSEEK_API_URL = '';
+				let idleSaveTimeout = null;
+
+				// 初始化 - 从本地存储加载配置和缓存
+				loadConfig();
+				loadCache();
+
+				// 保存API配置
+				saveApiBtn.addEventListener('click', function() {
+					DEEPSEEK_API_KEY = apiKeyInput.value.trim();
+					DEEPSEEK_API_URL = apiUrlInput.value.trim();
+
+					if (!DEEPSEEK_API_KEY || !DEEPSEEK_API_URL) {
+						alert('请填写API密钥和端点URL');
+						return;
+					}
+
+					saveConfig();
+					apiConfigSection.classList.add('hidden');
+					fileInputSection.classList.remove('hidden');
+				});
+
+				// 监听文件选择
+				fileInput.addEventListener('change', function(e) {
+					const file = e.target.files[0];
+					if (!file) return;
+
+					bookmarkDisplay.innerHTML =
+						'<div class="loading"><div class="spinner"></div>加载书签文件中...</div>';
+
+					const reader = new FileReader();
+					reader.onload = function(e) {
+						parseBookmarkFile(e.target.result);
+					};
+					reader.onerror = function(error) {
+						bookmarkDisplay.innerHTML =
+							`<div class="error-message">读取文件失败: ${error.target.error.message}</div>`;
+					};
+					reader.readAsText(file);
+				});
+
+				// 全选按钮
+				selectAllBtn.addEventListener('click', function() {
+					allBookmarkCards.forEach(card => {
+						const checkbox = card.querySelector('.bookmark-checkbox');
+						if (checkbox) {
+							checkbox.checked = true;
+							card.classList.add('selected');
+							selectedBookmarks.add(card.dataset.url);
+						}
+					});
+					updateButtonStates();
+				});
+
+				// 取消全选按钮
+				deselectAllBtn.addEventListener('click', function() {
+					allBookmarkCards.forEach(card => {
+						const checkbox = card.querySelector('.bookmark-checkbox');
+						if (checkbox) {
+							checkbox.checked = false;
+							card.classList.remove('selected');
+							selectedBookmarks.delete(card.dataset.url);
+						}
+					});
+					updateButtonStates();
+				});
+
+				// 获取选中摘要按钮
+				getSummariesBtn.addEventListener('click', async function() {
+					if (selectedBookmarks.size === 0) return;
+
+					const selectedCards = Array.from(allBookmarkCards).filter(card =>
+						selectedBookmarks.has(card.dataset.url)
+					);
+
+					// 显示进度条
+					progressContainer.style.display = 'block';
+					progressBar.style.width = '0%';
+					progressText.textContent = `0/${selectedCards.length}`;
+					batchStatus.textContent = '批量获取摘要中...';
+					getSummariesBtn.disabled = true;
+
+					// 使用队列控制并发请求数量
+					const CONCURRENT_LIMIT = 3;
+					const queue = [...selectedCards];
+					let completed = 0;
+					let activeRequests = 0;
+
+					async function processQueue() {
+						while (queue.length > 0 && activeRequests < CONCURRENT_LIMIT) {
+							const card = queue.shift();
+							activeRequests++;
+
+							try {
+								const descriptionElement = card.querySelector('.bookmark-description');
+								const keywordsElement = card.querySelector('.bookmark-keywords');
+								descriptionElement.innerHTML =
+									'<div class="loading"><div class="spinner"></div>获取网站摘要中...</div>';
+
+								const url = card.dataset.url;
+								const title = card.querySelector('.bookmark-title').textContent;
+
+								// 检查缓存
+								if (bookmarkCache[url]) {
+									descriptionElement.innerHTML = bookmarkCache[url].summary;
+									if (keywordsElement) {
+										keywordsElement.textContent =
+											`关键词: ${bookmarkCache[url].keywords}`;
+									}
+								} else {
+									// 调用DeepSeek API获取摘要
+									const response = await getWebsiteSummary(url, title);
+									descriptionElement.innerHTML = response.summary;
+
+									// 创建关键词元素如果不存在
+									if (!keywordsElement) {
+										const newKeywordsElement = document.createElement('div');
+										newKeywordsElement.className = 'bookmark-keywords';
+										descriptionElement.parentNode.insertBefore(newKeywordsElement,
+											descriptionElement.nextSibling);
+										newKeywordsElement.textContent = `关键词: ${response.keywords}`;
+									} else {
+										keywordsElement.textContent = `关键词: ${response.keywords}`;
+									}
+
+									// 更新缓存
+									bookmarkCache[url] = {
+										summary: response.summary,
+										keywords: response.keywords
+									};
+									saveCache();
+								}
+							} catch (error) {
+								const descriptionElement = card.querySelector('.bookmark-description');
+								descriptionElement.innerHTML =
+									`<span class="error-message">获取摘要失败: ${error.message}</span>`;
+								console.error('获取网站摘要失败:', error);
+							} finally {
+								activeRequests--;
+								completed++;
+
+								// 更新进度
+								const progress = Math.round((completed / selectedCards.length) * 100);
+								progressBar.style.width = `${progress}%`;
+								progressText.textContent = `${completed}/${selectedCards.length}`;
+
+								// 处理队列中的下一个
+								if (queue.length > 0 || activeRequests > 0) {
+									processQueue();
+								} else {
+									// 全部完成
+									batchStatus.textContent = `已完成 ${completed} 个网站的摘要获取`;
+									getSummariesBtn.disabled = false;
+								}
+							}
+						}
+					}
+
+					// 启动处理
+					for (let i = 0; i < CONCURRENT_LIMIT; i++) {
+						processQueue();
+					}
+				});
+
+				// 显示搜索界面
+				showSearchBtn.addEventListener('click', function() {
+					searchSection.classList.remove('hidden');
+					actionArea.classList.add('hidden');
+				});
+
+				// 搜索按钮
+				searchBtn.addEventListener('click', async function() {
+					const query = searchQueryInput.value.trim();
+					if (!query) return;
+
+					searchResults.innerHTML = '<div class="loading"><div class="spinner"></div>搜索中...</div>';
+
+					try {
+						const recommendations = await getSearchRecommendations(query);
+						displaySearchResults(recommendations);
+					} catch (error) {
+						searchResults.innerHTML = `<div class="error-message">搜索失败: ${error.message}</div>`;
+						console.error('搜索失败:', error);
+					}
+				});
+
+				// 更新按钮状态
+				function updateButtonStates() {
+					getSummariesBtn.disabled = selectedBookmarks.size === 0;
+				}
+
+				// 解析书签文件
+				function parseBookmarkFile(content) {
+					bookmarkDisplay.innerHTML = '<div class="loading"><div class="spinner"></div>解析书签中...</div>';
+					actionArea.style.display = 'none';
+					selectedBookmarks.clear();
+					allBookmarkCards = [];
+
+					try {
+						// 使用DOMParser解析HTML
+						const parser = new DOMParser();
+						const doc = parser.parseFromString(content, "text/html");
+
+						// 清空显示区域
+						bookmarkDisplay.innerHTML = '';
+
+						// 查找所有文件夹
+						const folders = doc.querySelectorAll('DL > DT > H3');
+
+						if (folders.length === 0) {
+							bookmarkDisplay.innerHTML = '<div class="no-bookmarks">未找到书签文件夹</div>';
+							return;
+						}
+
+						folders.forEach(folder => {
+							const folderTitle = folder.textContent;
+							const folderElement = document.createElement('div');
+							folderElement.className = 'bookmark-folder';
+
+							const titleElement = document.createElement('div');
+							titleElement.className = 'folder-title';
+							titleElement.textContent = folderTitle;
+
+							const bookmarksContainer = document.createElement('div');
+							bookmarksContainer.className = 'bookmarks-container';
+
+							// 查找当前文件夹下的所有书签
+							const bookmarks = folder.parentNode.querySelectorAll('A');
+
+							if (bookmarks.length === 0) {
+								const noBookmarks = document.createElement('div');
+								noBookmarks.className = 'no-bookmarks';
+								noBookmarks.textContent = '此文件夹中没有书签';
+								bookmarksContainer.appendChild(noBookmarks);
+							} else {
+								bookmarks.forEach(bookmark => {
+									const url = bookmark.getAttribute('HREF');
+									const title = bookmark.textContent;
+									const addDate = new Date(parseInt(bookmark.getAttribute(
+										'ADD_DATE')) * 1000);
+
+									const card = document.createElement('div');
+									card.className = 'bookmark-card';
+									card.dataset.url = url;
+
+									// 添加复选框
+									const checkbox = document.createElement('input');
+									checkbox.type = 'checkbox';
+									checkbox.className = 'bookmark-checkbox';
+									checkbox.addEventListener('change', function() {
+										if (this.checked) {
+											card.classList.add('selected');
+											selectedBookmarks.add(url);
+										} else {
+											card.classList.remove('selected');
+											selectedBookmarks.delete(url);
+										}
+										updateButtonStates();
+									});
+									card.appendChild(checkbox);
+
+									const cardContent = document.createElement('div');
+									cardContent.className = 'bookmark-content';
+
+									const titleElement = document.createElement('div');
+									titleElement.className = 'bookmark-title';
+									titleElement.textContent = title;
+
+									const linkElement = document.createElement('a');
+									linkElement.className = 'bookmark-link';
+									linkElement.href = url;
+									linkElement.textContent = url;
+									linkElement.target = '_blank';
+
+									const descriptionElement = document.createElement('div');
+									descriptionElement.className = 'bookmark-description';
+
+									// 检查缓存
+									if (bookmarkCache[url]) {
+										descriptionElement.innerHTML = bookmarkCache[url].summary;
+
+										const keywordsElement = document.createElement('div');
+										keywordsElement.className = 'bookmark-keywords';
+										keywordsElement.textContent =
+											`关键词: ${bookmarkCache[url].keywords}`;
+										cardContent.appendChild(keywordsElement);
+									} else {
+										descriptionElement.innerHTML = '<em>点击书签获取网站摘要...</em>';
+									}
+
+									const metaElement = document.createElement('div');
+									metaElement.className = 'bookmark-meta';
+									metaElement.innerHTML = `添加日期: ${addDate.toLocaleDateString()}`;
+
+									cardContent.appendChild(titleElement);
+									cardContent.appendChild(linkElement);
+									cardContent.appendChild(descriptionElement);
+									cardContent.appendChild(metaElement);
+									card.appendChild(cardContent);
+									bookmarksContainer.appendChild(card);
+
+									// 添加到全局数组
+									allBookmarkCards.push(card);
+
+									// 点击书签卡片时获取网站摘要
+									card.addEventListener('click', async function(e) {
+										// 防止点击链接或复选框时触发
+										if (e.target.tagName === 'A' || e.target.type ===
+											'checkbox') return;
+
+										// 如果已经有摘要，不再重复获取
+										if (descriptionElement.textContent !==
+											'点击书签获取网站摘要...' &&
+											!descriptionElement.textContent.includes(
+												'获取网站摘要中')) {
+											return;
+										}
+
+										descriptionElement.innerHTML =
+											'<div class="loading"><div class="spinner"></div>获取网站摘要中...</div>';
+
+										try {
+											// 检查缓存
+											if (bookmarkCache[url]) {
+												descriptionElement.innerHTML = bookmarkCache[
+													url].summary;
+
+												// 创建关键词元素如果不存在
+												const existingKeywords = card.querySelector(
+													'.bookmark-keywords');
+												if (!existingKeywords) {
+													const keywordsElement = document
+														.createElement('div');
+													keywordsElement.className =
+														'bookmark-keywords';
+													keywordsElement.textContent =
+														`关键词: ${bookmarkCache[url].keywords}`;
+													descriptionElement.parentNode
+														.insertBefore(keywordsElement,
+															descriptionElement.nextSibling);
+												}
+											} else {
+												// 调用DeepSeek API获取摘要
+												const response = await getWebsiteSummary(url,
+													title);
+												descriptionElement.innerHTML = response
+													.summary;
+
+												const keywordsElement = document
+													.createElement('div');
+												keywordsElement.className =
+													'bookmark-keywords';
+												keywordsElement.textContent =
+													`关键词: ${response.keywords}`;
+												descriptionElement.parentNode.insertBefore(
+													keywordsElement, descriptionElement
+													.nextSibling);
+
+												// 更新缓存
+												bookmarkCache[url] = {
+													summary: response.summary,
+													keywords: response.keywords
+												};
+												saveCache();
+											}
+										} catch (error) {
+											descriptionElement.innerHTML =
+												`<span class="error-message">获取摘要失败: ${error.message}</span>`;
+											console.error('获取网站摘要失败:', error);
+										}
+									});
+								});
+							}
+
+							folderElement.appendChild(titleElement);
+							folderElement.appendChild(bookmarksContainer);
+							bookmarkDisplay.appendChild(folderElement);
+
+							// 添加文件夹折叠/展开功能
+							titleElement.addEventListener('click', function() {
+								if (bookmarksContainer.style.display === 'none') {
+									bookmarksContainer.style.display = 'grid';
+									titleElement.classList.remove('collapsed');
+								} else {
+									bookmarksContainer.style.display = 'none';
+									titleElement.classList.add('collapsed');
+								}
+							});
+						});
+
+						// 显示操作按钮区域
+						if (allBookmarkCards.length > 0) {
+							actionArea.style.display = 'flex';
+							actionArea.classList.remove('hidden');
+							fileInputSection.classList.add('hidden');
+							searchSection.classList.remove('hidden');
+							updateButtonStates();
+						}
+					} catch (error) {
+						bookmarkDisplay.innerHTML = `<div class="error-message">解析书签文件失败: ${error.message}</div>`;
+						console.error('解析书签文件失败:', error);
+					}
+				}
+
+				// 调用DeepSeek API获取网站摘要
+				async function getWebsiteSummary(url, title) {
+					try {
+						const prompt = `请为以下网站提供一个简洁的摘要(中文)和关键词:
+										网站标题: ${title}
+										网站URL: ${url}
+
+										要求:
+										1. 第一行是用分号分隔的关键词(3-5个)
+										2. 第二行开始是用1-2句话概括网站的主要内容或功能
+										3. 保持语言简洁专业
+
+										示例:
+										编程;教程;Python;入门
+										菜鸟教程是一个提供各种编程语言基础教程的网站，适合初学者快速入门学习。`;
+
+						const response = await fetch(DEEPSEEK_API_URL, {
+							method: 'POST',
+							headers: {
+								'Content-Type': 'application/json',
+								'Authorization': `Bearer ${DEEPSEEK_API_KEY}`
+							},
+							body: JSON.stringify({
+								model: "deepseek-chat",
+								messages: [{
+									role: "user",
+									content: prompt
+								}],
+								temperature: 0.7,
+								max_tokens: 150
+							})
+						});
+
+						if (!response.ok) {
+							throw new Error(`API请求失败: ${response.status}`);
+						}
+
+						const data = await response.json();
+						const fullResponse = data.choices?.[0]?.message?.content || "无法获取网站摘要";
+
+						// 解析响应，分离关键词和摘要
+						const firstLineEnd = fullResponse.indexOf('\n');
+						let keywords = '';
+						let summary = fullResponse;
+
+						if (firstLineEnd > 0) {
+							keywords = fullResponse.substring(0, firstLineEnd).trim();
+							summary = fullResponse.substring(firstLineEnd + 1).trim();
+						}
+
+						return {
+							keywords: keywords || "无关键词",
+							summary: summary || "无法获取网站摘要"
+						};
+
+					} catch (error) {
+						console.error('调用DeepSeek API失败:', error);
+						// 返回模拟数据作为后备
+						const mockData = {
+							"https://i.chaoxing.com/base?t=1715766984349": {
+								keywords: "学习;教育;在线课程;超星",
+								summary: "超星个人空间是一个在线学习平台，提供课程学习、资源下载、作业提交等功能，是学生和教师进行在线教学互动的重要工具。"
+							}
+						};
+
+						return mockData[url] || {
+							keywords: "无关键词",
+							summary: "无法获取此网站的摘要信息。"
+						};
+					}
+				}
+
+				// 获取搜索推荐
+				async function getSearchRecommendations(query) {
+					try {
+						// 准备书签信息
+						const bookmarksInfo = Object.entries(bookmarkCache).map(([url, data]) => {
+							const card = Array.from(allBookmarkCards).find(c => c.dataset.url === url);
+							const title = card ? card.querySelector('.bookmark-title').textContent : url;
+							return {
+								title,
+								url,
+								keywords: data.keywords,
+								summary: data.summary
+							};
+						});
+
+						if (bookmarksInfo.length === 0) {
+							throw new Error('没有可搜索的书签摘要');
+						}
+
+						const prompt = `根据用户需求推荐最相关的书签。用户需求: "${query}"
+                
+                可用的书签信息:
+                ${bookmarksInfo.map(b => `
+                - 标题: ${b.title}
+                  URL: ${b.url}
+                  关键词: ${b.keywords}
+                  摘要: ${b.summary}
+                `).join('')}
+                
+                请按相关性从高到低推荐3-5个书签，每个推荐包含:
+                1. 推荐标题和原因(简短说明为什么这个书签符合用户需求)
+                2. 书签URL
+                格式为:
+                [标题]: [原因]
+                [URL]
+                ---
+                `;
+
+						const response = await fetch(DEEPSEEK_API_URL, {
+							method: 'POST',
+							headers: {
+								'Content-Type': 'application/json',
+								'Authorization': `Bearer ${DEEPSEEK_API_KEY}`
+							},
+							body: JSON.stringify({
+								model: "deepseek-chat",
+								messages: [{
+									role: "user",
+									content: prompt
+								}],
+								temperature: 0.7,
+								max_tokens: 500
+							})
+						});
+
+						if (!response.ok) {
+							throw new Error(`API请求失败: ${response.status}`);
+						}
+
+						const data = await response.json();
+						const recommendationsText = data.choices?.[0]?.message?.content || "无法生成推荐";
+
+						// 解析推荐结果
+						const recommendations = [];
+						const parts = recommendationsText.split('---').filter(p => p.trim());
+
+						for (const part of parts) {
+							const lines = part.trim().split('\n');
+							if (lines.length >= 2) {
+								const titleReason = lines[0].trim();
+								const url = lines[1].trim();
+
+								// 分离标题和原因
+								const colonIndex = titleReason.indexOf(':');
+								const title = colonIndex > 0 ? titleReason.substring(0, colonIndex).trim() :
+									titleReason;
+								const reason = colonIndex > 0 ? titleReason.substring(colonIndex + 1).trim() : '';
+
+								if (url.startsWith('http')) {
+									recommendations.push({
+										title,
+										reason,
+										url
+									});
+								}
+							}
+						}
+
+						return recommendations;
+
+					} catch (error) {
+						console.error('获取搜索推荐失败:', error);
+						throw error;
+					}
+				}
+
+				// 显示搜索结果
+				function displaySearchResults(recommendations) {
+					if (recommendations.length === 0) {
+						searchResults.innerHTML = '<div class="no-bookmarks">没有找到相关推荐</div>';
+						return;
+					}
+
+					let html = '<h3>推荐结果</h3>';
+
+					recommendations.forEach(rec => {
+						html += `
+                <div class="recommendation">
+                    <div class="recommendation-title">${rec.title}</div>
+                    <div class="recommendation-reason">${rec.reason}</div>
+                    <a href="${rec.url}" target="_blank" class="recommendation-link">${rec.url}</a>
+                </div>
+                `;
+					});
+
+					searchResults.innerHTML = html;
+				}
+
+				// XML持久化相关函数
+				function saveCacheToXML() {
+					if (!Object.keys(bookmarkCache).length) return;
+
+					// 创建XML结构
+					let xml = '<?xml version="1.0" encoding="UTF-8"?>\n';
+					xml += '<bookmarkCache>\n';
+
+					for (const [url, data] of Object.entries(bookmarkCache)) {
+						xml += `  <bookmark url="${escapeXml(url)}">\n`;
+						xml += `    <keywords>${escapeXml(data.keywords)}</keywords>\n`;
+						xml += `    <summary>${escapeXml(data.summary)}</summary>\n`;
+						xml += '  </bookmark>\n';
+					}
+
+					xml += '</bookmarkCache>';
+
+					// 创建Blob对象
+					const blob = new Blob([xml], {
+						type: 'application/xml'
+					});
+					const url = URL.createObjectURL(blob);
+
+					// 创建下载链接
+					const a = document.createElement('a');
+					a.href = url;
+					a.download = 'bookmark_cache.xml';
+					document.body.appendChild(a);
+					a.click();
+
+					// 清理
+					setTimeout(() => {
+						document.body.removeChild(a);
+						URL.revokeObjectURL(url);
+					}, 0);
+				}
+
+				// 从XML加载缓存
+				function loadCacheFromXML(file) {
+					return new Promise((resolve, reject) => {
+						const reader = new FileReader();
+
+						reader.onload = function(e) {
+							try {
+								const parser = new DOMParser();
+								const xmlDoc = parser.parseFromString(e.target.result, "application/xml");
+								const bookmarks = xmlDoc.getElementsByTagName("bookmark");
+								const newCache = {};
+
+								for (let bookmark of bookmarks) {
+									const url = bookmark.getAttribute("url");
+									const keywords = bookmark.getElementsByTagName("keywords")[0]
+										?.textContent || "";
+									const summary = bookmark.getElementsByTagName("summary")[0]
+										?.textContent || "";
+
+									if (url) {
+										newCache[url] = {
+											keywords,
+											summary
+										};
+									}
+								}
+
+								// 合并到现有缓存
+								Object.assign(bookmarkCache, newCache);
+								saveCache(); // 保存到localStorage
+								resolve();
+							} catch (error) {
+								reject(error);
+							}
+						};
+
+						reader.onerror = reject;
+						reader.readAsText(file);
+					});
+				}
+
+				// XML特殊字符转义
+				function escapeXml(unsafe) {
+					return unsafe.replace(/[<>&'"]/g, c => {
+						switch (c) {
+							case '<':
+								return '&lt;';
+							case '>':
+								return '&gt;';
+							case '&':
+								return '&amp;';
+							case '\'':
+								return '&apos;';
+							case '"':
+								return '&quot;';
+							default:
+								return c;
+						}
+					});
+				}
+
+				// 空闲时保存XML
+				function scheduleIdleSave() {
+					if (idleSaveTimeout) clearTimeout(idleSaveTimeout);
+
+					idleSaveTimeout = setTimeout(() => {
+						if (document.visibilityState === 'visible') {
+							saveCacheToXML();
+						}
+					}, 10000); // 10秒空闲后保存
+				}
+
+				// 从本地存储加载配置
+				function loadConfig() {
+					const savedConfig = localStorage.getItem('bookmarkVisualizerConfig');
+					if (savedConfig) {
+						try {
+							const config = JSON.parse(savedConfig);
+							apiKeyInput.value = config.apiKey || '';
+							apiUrlInput.value = config.apiUrl || '';
+							DEEPSEEK_API_KEY = config.apiKey || '';
+							DEEPSEEK_API_URL = config.apiUrl || '';
+
+							if (DEEPSEEK_API_KEY && DEEPSEEK_API_URL) {
+								apiConfigSection.classList.add('hidden');
+								fileInputSection.classList.remove('hidden');
+							}
+						} catch (e) {
+							console.error('解析配置失败:', e);
+						}
+					}
+				}
+
+				// 保存配置到本地存储
+				function saveConfig() {
+					const config = {
+						apiKey: DEEPSEEK_API_KEY,
+						apiUrl: DEEPSEEK_API_URL
+					};
+					localStorage.setItem('bookmarkVisualizerConfig', JSON.stringify(config));
+				}
+
+				// 从本地存储加载缓存
+				function loadCache() {
+					const savedCache = localStorage.getItem('bookmarkCache');
+					if (savedCache) {
+						try {
+							bookmarkCache = JSON.parse(savedCache);
+						} catch (e) {
+							console.error('解析缓存失败:', e);
+							bookmarkCache = {};
+						}
+					}
+				}
+
+				// 保存缓存到本地存储
+				function saveCache() {
+					localStorage.setItem('bookmarkCache', JSON.stringify(bookmarkCache));
+					scheduleIdleSave(); // 调度XML保存
+				}
+
+				// 添加XML导入按钮
+				const importXmlBtn = document.createElement('button');
+				importXmlBtn.className = 'action-button';
+				importXmlBtn.textContent = '导入XML缓存';
+				importXmlBtn.style.marginTop = '10px';
+				importXmlBtn.onclick = function() {
+					const input = document.createElement('input');
+					input.type = 'file';
+					input.accept = '.xml';
+					input.onchange = function(e) {
+						const file = e.target.files[0];
+						if (file) {
+							loadCacheFromXML(file)
+								.then(() => {
+									alert('缓存导入成功！');
+									location.reload(); // 刷新以应用新缓存
+								})
+								.catch(error => {
+									alert('导入失败: ' + error.message);
+								});
+						}
+					};
+					input.click();
+				};
+
+				document.querySelector('.api-config').appendChild(importXmlBtn);
+
+				// 添加XML导出按钮
+				const exportXmlBtn = document.createElement('button');
+				exportXmlBtn.className = 'action-button';
+				exportXmlBtn.textContent = '导出XML缓存';
+				exportXmlBtn.style.marginTop = '10px';
+				exportXmlBtn.onclick = saveCacheToXML;
+				document.querySelector('.api-config').appendChild(exportXmlBtn);
+			});
+		</script>
+	</body>
+</html>
