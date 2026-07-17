@@ -36,6 +36,9 @@ const names = [
   'safeExternalUrl',
   'escapeAttribute',
   'buildProgressSnapshot',
+  'createHttpError',
+  'isRetryableError',
+  'getRuntimeProtocolError',
   'withRetry',
   'stableClusterId',
   'projectVectorForClustering',
@@ -45,6 +48,7 @@ const names = [
   'euclideanSq',
   'averageDistToCluster',
   'kMeans',
+  'shouldRetryLocalEmbedder',
 ];
 const context = { URL, setTimeout };
 vm.createContext(context);
@@ -56,6 +60,10 @@ assert.deepEqual(
   { provider: 'local', model: 'Xenova/all-MiniLM-L6-v2', dimensions: 384 },
   'legacy local vectors should be identified by dimension',
 );
+assert.equal(api.shouldRetryLocalEmbedder(null, 1000), true);
+assert.equal(api.shouldRetryLocalEmbedder({ retryAfter: 2000 }, 1000), false);
+assert.equal(api.shouldRetryLocalEmbedder({ retryAfter: 2000 }, 2000), true,
+  'local model initialization must recover after a transient failure');
 assert.deepEqual(
   JSON.parse(JSON.stringify(api.inferEmbeddingMeta({ embedding: Array(1536).fill(0) }))),
   { provider: 'openai', model: 'text-embedding-3-small', dimensions: 1536 },
@@ -95,6 +103,24 @@ const retryResult = await api.withRetry(async () => {
 }, 3, 0);
 assert.equal(retryResult, 'ok');
 assert.equal(attempts, 3);
+
+const authError = api.createHttpError('DeepSeek', 401, '{"error":"invalid key"}');
+assert.equal(authError.status, 401);
+assert.equal(authError.service, 'DeepSeek');
+assert.equal(api.isRetryableError(authError), false,
+  'invalid credentials must not be retried');
+let authAttempts = 0;
+await assert.rejects(api.withRetry(async () => {
+  authAttempts++;
+  throw authError;
+}, 3, 0), /DeepSeek 401/);
+assert.equal(authAttempts, 1, '401 failures must stop after the first request');
+assert.equal(api.isRetryableError(api.createHttpError('DeepSeek', 503, 'busy')), true);
+
+assert.match(api.getRuntimeProtocolError('file:'), /start\.bat/);
+assert.match(api.getRuntimeProtocolError('file:'), /http:\/\/localhost:8080/);
+assert.equal(api.getRuntimeProtocolError('http:'), null);
+assert.equal(api.getRuntimeProtocolError('https:'), null);
 
 assert.equal(api.stableClusterId(['b', 'a']), api.stableClusterId(['a', 'b']),
   'cluster identity must not depend on member order');
@@ -148,6 +174,8 @@ assert.doesNotMatch(source, /href="\$\{escapeHtml\(bm\.url\)\}"/,
 assert.match(source, /const inFlightUrls = new Set\(\)/);
 assert.match(source, /failedUrls\.add\(url\)/,
   'failed queue entries must remain recoverable');
+assert.match(source, /fatalQueueError\s*=\s*e/,
+  'authentication failures must stop the background queue');
 assert.match(source, /finally \{\s*queueRunning = false;/,
   'queue lock must always be released');
 assert.match(source, /async function loadProgress\(\)/,
@@ -156,6 +184,8 @@ assert.match(source, /opfsWrite\(OPFS_PROGRESS_FILE/,
   'progress must be persisted to OPFS');
 assert.doesNotMatch(source, /falling back to local/,
   'a configured OpenAI vector space must not silently mix in local vectors');
+assert.doesNotMatch(source, /if \(localEmbedderFailed\) return null/,
+  'a transient model failure must not permanently disable retries');
 assert.match(source, /throw new Error\('缓存写入失败/,
   'failure of every cache backend must be observable');
 assert.match(source, /summarySource:\s*'title-url-inference'/,

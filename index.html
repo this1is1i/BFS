@@ -1187,6 +1187,25 @@ function parseRecommendations(response, allowedUrls) {
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
 // ---- API Clients ----
+function createHttpError(service, status, responseBody = '') {
+  let message = `${service} ${status}`;
+  if (status === 401) message += '：API Key 无效或已失效，请更新配置';
+  else if (status === 403) message += '：当前 API Key 没有访问权限';
+  else if (responseBody) message += `: ${responseBody}`;
+  const error = new Error(message);
+  error.name = 'HttpError';
+  error.service = service;
+  error.status = status;
+  error.responseBody = responseBody;
+  return error;
+}
+
+function isRetryableError(error) {
+  if (!Number.isInteger(error?.status)) return true;
+  return error.status === 408 || error.status === 409 || error.status === 425 ||
+    error.status === 429 || error.status >= 500;
+}
+
 async function callDeepSeek(model, messages, maxTokens = 500) {
   const response = await fetch(`${config.deepseekUrl}/chat/completions`, {
     method: 'POST',
@@ -1196,7 +1215,7 @@ async function callDeepSeek(model, messages, maxTokens = 500) {
     },
     body: JSON.stringify({ model, messages, temperature: 0.7, max_tokens: maxTokens }),
   });
-  if (!response.ok) throw new Error(`DeepSeek ${response.status}: ${await response.text()}`);
+  if (!response.ok) throw createHttpError('DeepSeek', response.status, await response.text());
   const data = await response.json();
   return data.choices?.[0]?.message?.content || '';
 }
@@ -1210,15 +1229,19 @@ async function callOpenAIEmbedding(text) {
     },
     body: JSON.stringify({ model: 'text-embedding-3-small', input: text }),
   });
-  if (!response.ok) throw new Error(`OpenAI Embedding ${response.status}`);
+  if (!response.ok) throw createHttpError('OpenAI Embedding', response.status, await response.text());
   const data = await response.json();
   return data.data?.[0]?.embedding || null;
 }
 
 // ---- Local Embedding Fallback ----
 let localEmbedder = null;
-let localEmbedderFailed = false;
+let localEmbedderFailure = null;
 let localEmbedderPromise = null;  // serialize concurrent init attempts
+
+function shouldRetryLocalEmbedder(failure, now = Date.now()) {
+  return !failure || now >= failure.retryAfter;
+}
 
 function updateModelStatus(state, label) {
   if (domModelDot) {
@@ -1230,7 +1253,7 @@ function updateModelStatus(state, label) {
 
 async function initLocalEmbedder() {
   if (localEmbedder) return localEmbedder;
-  if (localEmbedderFailed) return null;
+  if (!shouldRetryLocalEmbedder(localEmbedderFailure)) return null;
   if (localEmbedderPromise) return localEmbedderPromise; // wait for in-progress init
 
   localEmbedderPromise = (async () => {
@@ -1243,12 +1266,18 @@ async function initLocalEmbedder() {
       mod.env.backends.onnx.wasm.wasmPaths = './vendor/';
       mod.env.backends.onnx.wasm.numThreads = 1;
       localEmbedder = await mod.pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2');
+      localEmbedderFailure = null;
       updateModelStatus('ready', '模型就绪 (本地 384维)');
       return localEmbedder;
     } catch(e) {
       console.warn('Local embedding model failed to load:', e.message);
-      localEmbedderFailed = true;
-      updateModelStatus('failed', '模型加载失败');
+      const attempts = (localEmbedderFailure?.attempts || 0) + 1;
+      localEmbedderFailure = {
+        attempts,
+        retryAfter: Date.now() + Math.min(30000, 1000 * 2 ** (attempts - 1)),
+        message: e.message,
+      };
+      updateModelStatus('failed', '模型加载失败，稍后自动重试');
       return null;
     } finally {
       localEmbedderPromise = null;
@@ -1540,6 +1569,7 @@ let alreadyDoneCount = 0;  // items already processed before queue started
 let failedCount = 0;
 const inFlightUrls = new Set();
 const failedUrls = new Set();
+let fatalQueueError = null;
 
 function buildProgressSnapshot(pending, inFlight, failed, counters) {
   return {
@@ -1557,6 +1587,7 @@ async function withRetry(operation, maxAttempts = 3, baseDelay = 500) {
     try { return await operation(); }
     catch (error) {
       lastError = error;
+      if (!isRetryableError(error)) break;
       if (attempt < maxAttempts && baseDelay > 0) await sleep(baseDelay * 2 ** (attempt - 1));
     }
   }
@@ -1598,7 +1629,7 @@ async function processBatch(urls) {
   pendingUrls = [...urls];
 
   const worker = async () => {
-    while (pendingUrls.length > 0) {
+    while (pendingUrls.length > 0 && !fatalQueueError) {
       const url = pendingUrls.shift();
       if (!entryNeedsProcessing(cache.bookmarks[url])) {
         completedCount++;
@@ -1639,6 +1670,7 @@ async function processBatch(urls) {
         console.error('Generate failed for', url, e.message);
         failedUrls.add(url);
         failedCount++;
+        if (e.status === 401 || e.status === 403) fatalQueueError = e;
       } finally {
         inFlightUrls.delete(url);
         activeCount--;
@@ -1667,6 +1699,7 @@ async function startBackgroundQueue(urls) {
     activeCount = 0;
     inFlightUrls.clear();
     failedUrls.clear();
+    fatalQueueError = null;
 
     const unprocessed = uniqueUrls.filter(u => entryNeedsProcessing(cache.bookmarks[u]));
     pendingUrls = [...unprocessed];
@@ -1676,7 +1709,25 @@ async function startBackgroundQueue(urls) {
     await persistProgress();
     await processBatch(unprocessed);
 
-    if (failedUrls.size === 0) {
+    if (fatalQueueError) {
+      const isDeepSeek = fatalQueueError.service === 'DeepSeek';
+      if (isDeepSeek) {
+        config.deepseekKey = '';
+        domCfgDeepseekKey.value = '';
+      } else {
+        config.openaiKey = '';
+        domCfgOpenaiKey.value = '';
+      }
+      sessionStorage.setItem('bfs_session_keys', JSON.stringify({
+        deepseekKey: config.deepseekKey,
+        openaiKey: config.openaiKey,
+      }));
+      domProgressLabel.textContent = fatalQueueError.message;
+      domLanding.classList.remove('hidden');
+      domApp.classList.add('hidden');
+      domConfigPanel.classList.remove('collapsed');
+      await persistProgress();
+    } else if (failedUrls.size === 0) {
       domProgressLabel.textContent = '已完成';
       try { await runClustering(); }
       catch(e) { console.error('Clustering failed:', e.message); }
@@ -1987,8 +2038,21 @@ async function checkResume() {
 }
 
 // ---- Init ----
+function getRuntimeProtocolError(protocol) {
+  return protocol === 'file:'
+    ? 'BFS 不能通过 file:// 直接运行。请双击 start.bat，然后访问 http://localhost:8080。'
+    : null;
+}
+
 async function init() {
   loadConfig();
+  const protocolError = getRuntimeProtocolError(location.protocol);
+  if (protocolError) {
+    domBtnImport.disabled = true;
+    domResumePrompt.classList.remove('hidden');
+    domResumePrompt.innerHTML = `<p>⚠️ ${escapeHtml(protocolError)}</p>`;
+    return;
+  }
   await checkResume();
 
   // If bookmark file path is passed via URL hash or stored, auto-reopen?
