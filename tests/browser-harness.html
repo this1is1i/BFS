@@ -1,0 +1,50 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>BFS browser regression harness</title>
+<pre id="result">RUNNING</pre>
+<script type="module">
+const result = document.querySelector('#result');
+const checks = [];
+const assert = (condition, message) => {
+  if (!condition) throw new Error(message);
+  checks.push(message);
+};
+
+try {
+  const source = await (await fetch('../index.html')).text();
+  const parserStart = source.indexOf('function parseBookmarkHTML');
+  const parserEnd = source.indexOf('// ---- Folder Tree Builder ----');
+  const parseBookmarkHTML = new Function(
+    `${source.slice(parserStart, parserEnd)}; return parseBookmarkHTML;`
+  )();
+  const fixture = `<!DOCTYPE NETSCAPE-Bookmark-file-1><DL><p>
+    <DT><H3>Root</H3><DL><p>
+      <DT><A HREF="https://a.example">A</A>
+      <DT><H3>Child</H3><DL><p>
+        <DT><A HREF="https://b.example">B</A>
+        <DT><A HREF="https://b.example">duplicate</A>
+      </DL><p>
+    </DL><p>
+  </DL>`;
+  const parsed = parseBookmarkHTML(fixture);
+  assert(parsed.length === 2, 'nested parser deduplicates URLs');
+  assert(parsed[0].folder === 'Root', 'root folder path is preserved');
+  assert(parsed[1].folder === 'Root / Child', 'nested folder path is preserved');
+
+  const mod = await import('../vendor/transformers.min.js');
+  mod.env.allowLocalModels = true;
+  mod.env.allowRemoteModels = false;
+  mod.env.localModelPath = '../models/';
+  mod.env.backends.onnx.wasm.wasmPaths = '../vendor/';
+  mod.env.backends.onnx.wasm.numThreads = 1;
+  const embedder = await mod.pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2');
+  const output = await embedder('BFS browser smoke test', { pooling: 'mean', normalize: true });
+  assert(output.data.length === 384, 'local embedding pipeline returns 384 dimensions');
+
+  result.textContent = `PASS\n${checks.join('\n')}`;
+  result.dataset.status = 'pass';
+} catch (error) {
+  result.textContent = `FAIL\n${error.stack || error.message}`;
+  result.dataset.status = 'fail';
+}
+</script>

@@ -643,6 +643,7 @@ a:hover { text-decoration: underline; }
       <label>OpenAI API URL</label>
       <input type="text" id="cfg-openai-url" value="https://api.openai.com/v1" />
     </div>
+    <p style="font-size:12px;color:var(--text-muted);">API Key 仅保留在当前标签页，关闭后自动清除。</p>
     <button class="btn-primary" id="btn-save-config" style="align-self:flex-end;margin-top:4px;">保存配置</button>
   </div>
 
@@ -715,11 +716,23 @@ let selectedFolder = null;
 let queueRunning = false;
 let bookmarksDirHandle = null;   // FileSystemDirectoryHandle for bookmark file's dir
 
-// ---- Config Persistence (localStorage) ----
+// ---- Config Persistence (keys are session-only) ----
 function loadConfig() {
   try {
     const saved = JSON.parse(localStorage.getItem('bfs_config'));
-    if (saved) Object.assign(config, saved);
+    const safeConfig = {
+      deepseekUrl: saved?.deepseekUrl || config.deepseekUrl,
+      openaiUrl: saved?.openaiUrl || config.openaiUrl,
+    };
+    Object.assign(config, safeConfig);
+    const sessionKeys = JSON.parse(sessionStorage.getItem('bfs_session_keys'));
+    config.deepseekKey = sessionKeys?.deepseekKey || saved?.deepseekKey || '';
+    config.openaiKey = sessionKeys?.openaiKey || saved?.openaiKey || '';
+    if (config.deepseekKey || config.openaiKey) sessionStorage.setItem('bfs_session_keys', JSON.stringify({
+      deepseekKey: config.deepseekKey,
+      openaiKey: config.openaiKey,
+    }));
+    if (saved) localStorage.setItem('bfs_config', JSON.stringify(safeConfig));
     domCfgDeepseekKey.value = config.deepseekKey;
     domCfgDeepseekUrl.value = config.deepseekUrl;
     domCfgOpenaiKey.value = config.openaiKey;
@@ -732,7 +745,14 @@ function saveConfig() {
   config.deepseekUrl = domCfgDeepseekUrl.value.trim();
   config.openaiKey = domCfgOpenaiKey.value.trim();
   config.openaiUrl = domCfgOpenaiUrl.value.trim();
-  localStorage.setItem('bfs_config', JSON.stringify(config));
+  localStorage.setItem('bfs_config', JSON.stringify({
+    deepseekUrl: config.deepseekUrl,
+    openaiUrl: config.openaiUrl,
+  }));
+  sessionStorage.setItem('bfs_session_keys', JSON.stringify({
+    deepseekKey: config.deepseekKey,
+    openaiKey: config.openaiKey,
+  }));
 }
 
 // ---- IndexedDB Helpers (primary store: works from file://, much larger than localStorage) ----
@@ -798,25 +818,35 @@ async function opfsWrite(filename, data) {
     const writable = await handle.createWritable();
     await writable.write(JSON.stringify(data, null, 2));
     await writable.close();
-  } catch { /* OPFS not available */ }
+    return true;
+  } catch { return false; }
 }
 
 // Write cache to both IndexedDB (primary) and OPFS (bonus)
 async function persistCache() {
   cache.lastModified = new Date().toISOString();
   cache.categoryLabels = categoryLabels;
-  await Promise.allSettled([
+  const [idbResult, opfsResult] = await Promise.allSettled([
     idbSet(IDB_CACHE_KEY, cache),
     opfsWrite(OPFS_CACHE_FILE, cache),
   ]);
+  const idbSucceeded = idbResult.status === 'fulfilled';
+  const opfsSucceeded = opfsResult.status === 'fulfilled' && opfsResult.value === true;
+  if (!idbSucceeded && !opfsSucceeded) {
+    throw new Error('缓存写入失败：IndexedDB 与 OPFS 均不可用');
+  }
 }
 
 // Read cache: IDB first, OPFS fallback
 async function loadCache() {
-  let data = await idbGet(IDB_CACHE_KEY);
+  let data = null;
+  try { data = await idbGet(IDB_CACHE_KEY); }
+  catch(e) { console.warn('IndexedDB cache read failed:', e.message); }
   if (!data) {
     data = await opfsRead(OPFS_CACHE_FILE);
-    if (data) await idbSet(IDB_CACHE_KEY, data); // migrate to IDB
+    if (data) {
+      try { await idbSet(IDB_CACHE_KEY, data); } catch { /* OPFS remains authoritative */ }
+    }
   }
   return data;
 }
@@ -858,37 +888,38 @@ function parseBookmarkHTML(htmlContent) {
   const parser = new DOMParser();
   const doc = parser.parseFromString(htmlContent, 'text/html');
   const result = [];
-  const folders = doc.querySelectorAll('DL > DT > H3');
+  const root = doc.querySelector('DL');
+  if (!root) return result;
 
-  folders.forEach(folderEl => {
-    const folderName = folderEl.textContent.trim();
-    const dl = folderEl.closest('DT')?.querySelector('DL');
-    if (!dl) return;
-    const links = dl.querySelectorAll(':scope > DT > A');
-    links.forEach(a => {
-      const url = a.getAttribute('HREF');
-      const title = a.textContent.trim();
-      const addDate = parseInt(a.getAttribute('ADD_DATE') || '0') * 1000;
-      const icon = a.getAttribute('ICON') || '';
-      if (url && title) {
-        result.push({ url, title, addDate, folder: folderName, icon });
+  const visit = (dl, path) => {
+    for (const dt of dl.querySelectorAll(':scope > DT')) {
+      const directLink = dt.querySelector(':scope > A');
+      if (directLink) {
+        const url = directLink.getAttribute('HREF');
+        const title = directLink.textContent.trim();
+        const addDate = parseInt(directLink.getAttribute('ADD_DATE') || '0') * 1000;
+        const icon = directLink.getAttribute('ICON') || '';
+        if (url && title) result.push({
+          url, title, addDate, folder: path.join(' / ') || '未分类', icon,
+        });
       }
-    });
-  });
 
-  // Also grab top-level bookmarks (not in any H3 folder)
-  const topLevelLinks = doc.querySelectorAll('DL > DT > A');
-  topLevelLinks.forEach(a => {
-    const url = a.getAttribute('HREF');
-    const title = a.textContent.trim();
-    const addDate = parseInt(a.getAttribute('ADD_DATE') || '0') * 1000;
-    const icon = a.getAttribute('ICON') || '';
-    if (url && title) {
-      result.push({ url, title, addDate, folder: '未分类', icon });
+      const heading = dt.querySelector(':scope > H3');
+      const childDl = dt.querySelector(':scope > DL');
+      if (heading && childDl) visit(childDl, [...path, heading.textContent.trim()]);
     }
-  });
+  };
+  visit(root, []);
+  return dedupeBookmarks(result);
+}
 
-  return result;
+function dedupeBookmarks(items) {
+  const seen = new Set();
+  return items.filter(item => {
+    if (!item?.url || seen.has(item.url)) return false;
+    seen.add(item.url);
+    return true;
+  });
 }
 
 // ---- Folder Tree Builder ----
@@ -1019,7 +1050,10 @@ function createBookmarkCard(bm) {
 
   let html = '';
   html += `<div class="card-title">${escapeHtml(bm.title)}</div>`;
-  html += `<a class="card-url" href="${escapeHtml(bm.url)}" target="_blank" rel="noopener">${escapeHtml(bm.url)}</a>`;
+  const safeUrl = safeExternalUrl(bm.url);
+  html += safeUrl
+    ? `<a class="card-url" href="${escapeAttribute(safeUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(bm.url)}</a>`
+    : `<span class="card-url" title="不支持的链接协议">${escapeHtml(bm.url)}</span>`;
 
   if (isPending) {
     html += `<div class="card-loading">
@@ -1027,14 +1061,15 @@ function createBookmarkCard(bm) {
       <div class="dot-pulse"><span></span><span></span><span></span></div>
     </div>`;
   } else {
-    html += `<div class="card-summary">${escapeHtml(entry.summary)}</div>`;
+    const sourceLabel = !entry.summarySource || entry.summarySource === 'title-url-inference' ? '标题/URL 推断 · ' : '';
+    html += `<div class="card-summary">${sourceLabel}${escapeHtml(entry.summary)}</div>`;
     if (entry.keywords && entry.keywords.length) {
       html += `<div class="card-keywords">关键词: ${escapeHtml(entry.keywords.join('; '))}</div>`;
     }
     if (entry.categories && entry.categories.length) {
       html += '<div class="card-categories">';
       for (const cat of entry.categories) {
-        html += `<span class="card-category-tag" data-category="${escapeHtml(cat)}">${escapeHtml(cat)}</span>`;
+        html += `<span class="card-category-tag" data-category="${escapeAttribute(cat)}">${escapeHtml(cat)}</span>`;
       }
       html += '</div>';
     }
@@ -1080,8 +1115,73 @@ function updateBookmarkCardUI(url) {
 // ---- Utils ----
 function escapeHtml(str) {
   const div = document.createElement('div');
-  div.textContent = str;
+  div.textContent = String(str ?? '');
   return div.innerHTML;
+}
+
+function escapeAttribute(str) {
+  return String(str ?? '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+
+function safeExternalUrl(value) {
+  try {
+    const parsed = new URL(String(value));
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? parsed.href : null;
+  } catch { return null; }
+}
+
+function stableClusterId(urls) {
+  let hash = 2166136261;
+  for (const char of [...urls].sort().join('\n')) {
+    hash ^= char.charCodeAt(0);
+    hash = Math.imul(hash, 16777619);
+  }
+  return `members_${(hash >>> 0).toString(16)}`;
+}
+
+function projectVectorForClustering(vector, maxDimensions = 128) {
+  if (vector.length <= maxDimensions) return vector;
+  const step = vector.length / maxDimensions;
+  return Array.from({ length: maxDimensions }, (_, i) => vector[Math.floor(i * step)]);
+}
+
+function parseRecommendations(response, allowedUrls) {
+  try {
+    const text = String(response);
+    let parsed = null;
+    for (let start = text.indexOf('['); start !== -1; start = text.indexOf('[', start + 1)) {
+      let depth = 0, quote = null, escaped = false;
+      for (let i = start; i < text.length; i++) {
+        const char = text[i];
+        if (quote) {
+          if (escaped) escaped = false;
+          else if (char === '\\') escaped = true;
+          else if (char === quote) quote = null;
+          continue;
+        }
+        if (char === '"') { quote = char; continue; }
+        if (char === '[') depth++;
+        if (char === ']' && --depth === 0) {
+          try {
+            const candidate = JSON.parse(text.slice(start, i + 1));
+            if (Array.isArray(candidate)) parsed = candidate;
+          } catch { /* try the next opening bracket */ }
+          break;
+        }
+      }
+      if (parsed) break;
+    }
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(item =>
+      item && typeof item.title === 'string' && typeof item.reason === 'string' &&
+      typeof item.url === 'string' && allowedUrls.has(item.url)
+    ).slice(0, 5).map(item => ({ title: item.title, reason: item.reason, url: item.url }));
+  } catch { return []; }
 }
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
@@ -1136,10 +1236,12 @@ async function initLocalEmbedder() {
   localEmbedderPromise = (async () => {
     updateModelStatus('loading', '加载本地模型...');
     try {
-      const mod = await import('https://cdn.jsdelivr.net/npm/@xenova/transformers@2.16.1/dist/transformers.min.js');
+      const mod = await import('./vendor/transformers.min.js');
       mod.env.allowLocalModels = true;
       mod.env.allowRemoteModels = false;
       mod.env.localModelPath = './models/';
+      mod.env.backends.onnx.wasm.wasmPaths = './vendor/';
+      mod.env.backends.onnx.wasm.numThreads = 1;
       localEmbedder = await mod.pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2');
       updateModelStatus('ready', '模型就绪 (本地 384维)');
       return localEmbedder;
@@ -1179,11 +1281,58 @@ async function getEmbedding(text) {
     try {
       const emb = await callOpenAIEmbedding(text);
       if (emb) updateModelStatus('ready', 'OpenAI (1536维)');
-      return emb;
+      if (emb) return {
+        vector: emb,
+        provider: 'openai',
+        model: 'text-embedding-3-small',
+        dimensions: emb.length,
+      };
     }
-    catch(e) { console.warn('OpenAI embedding failed, falling back to local:', e.message); }
+    catch(e) {
+      console.warn('OpenAI embedding failed:', e.message);
+      throw e;
+    }
   }
-  return getLocalEmbedding(text);
+  const emb = await getLocalEmbedding(text);
+  return emb ? {
+    vector: emb,
+    provider: 'local',
+    model: 'Xenova/all-MiniLM-L6-v2',
+    dimensions: emb.length,
+  } : null;
+}
+
+function inferEmbeddingMeta(entry) {
+  if (!entry?.embedding?.length) return null;
+  if (entry.embeddingProvider && entry.embeddingModel && entry.embeddingDimensions) {
+    return {
+      provider: entry.embeddingProvider,
+      model: entry.embeddingModel,
+      dimensions: entry.embeddingDimensions,
+    };
+  }
+  if (entry.embedding.length === 384) {
+    return { provider: 'local', model: 'Xenova/all-MiniLM-L6-v2', dimensions: 384 };
+  }
+  if (entry.embedding.length === 1536) {
+    return { provider: 'openai', model: 'text-embedding-3-small', dimensions: 1536 };
+  }
+  return null;
+}
+
+function embeddingsCompatible(queryMeta, entry) {
+  const entryMeta = inferEmbeddingMeta(entry);
+  return !!queryMeta && !!entryMeta &&
+    queryMeta.provider === entryMeta.provider &&
+    queryMeta.model === entryMeta.model &&
+    queryMeta.dimensions === entryMeta.dimensions &&
+    entry.embedding.length === queryMeta.dimensions;
+}
+
+function desiredEmbeddingMeta() {
+  return config.openaiKey
+    ? { provider: 'openai', model: 'text-embedding-3-small', dimensions: 1536 }
+    : { provider: 'local', model: 'Xenova/all-MiniLM-L6-v2', dimensions: 384 };
 }
 
 // ---- Summary Generation ----
@@ -1196,6 +1345,7 @@ async function generateSummary(url, title) {
 1. 第一行是用分号分隔的关键词(3-5个)
 2. 第二行开始是用1-2句话概括网站的主要内容或功能
 3. 保持语言简洁专业
+4. 你没有访问网页正文，只能根据标题和 URL 推断；无法判断时明确写“仅凭标题和URL无法确定”，不要编造具体功能
 
 示例:
 编程;教程;Python;入门
@@ -1210,10 +1360,24 @@ async function generateSummary(url, title) {
 
 // ---- Clustering ----
 async function runClustering() {
-  const entries = Object.entries(cache.bookmarks).filter(([, v]) => v.embedding && v.summary);
+  const compatibleGroups = new Map();
+  const targetMeta = desiredEmbeddingMeta();
+  for (const item of Object.entries(cache.bookmarks)) {
+    const meta = inferEmbeddingMeta(item[1]);
+    if (!meta || !item[1].summary) continue;
+    if (!embeddingsCompatible(targetMeta, item[1])) {
+      item[1].categories = [];
+      continue;
+    }
+    const key = `${meta.provider}:${meta.model}:${meta.dimensions}`;
+    if (!compatibleGroups.has(key)) compatibleGroups.set(key, []);
+    compatibleGroups.get(key).push(item);
+  }
+  const targetKey = `${targetMeta.provider}:${targetMeta.model}:${targetMeta.dimensions}`;
+  const entries = compatibleGroups.get(targetKey) || [];
   if (entries.length < CLUSTER_TRIGGER_COUNT) return;
 
-  const vectors = entries.map(([, v]) => v.embedding);
+  const vectors = entries.map(([, v]) => projectVectorForClustering(v.embedding));
   const urls = entries.map(([url]) => url);
 
   // Simple k-means
@@ -1222,7 +1386,7 @@ async function runClustering() {
   let bestClusters = null;
 
   for (let k = 3; k <= maxK; k++) {
-    const { clusters, score } = kMeans(vectors, k, 10);
+    const { clusters, score } = kMeans(vectors, k, 10, stableClusterId(urls));
     if (score > bestScore) { bestScore = score; bestK = k; bestClusters = clusters; }
   }
 
@@ -1239,7 +1403,8 @@ async function runClustering() {
   // Generate labels for new/changed clusters using Pro
   const newLabels = {};
   for (const [cid, clusterUrls] of Object.entries(clusterAssignments)) {
-    if (categoryLabels[cid]) { newLabels[cid] = categoryLabels[cid]; continue; }
+    const stableId = stableClusterId(clusterUrls);
+    if (categoryLabels[stableId]) { newLabels[cid] = categoryLabels[stableId]; continue; }
     // Generate label from sample summaries
     const samples = clusterUrls.slice(0, 5).map(u => {
       const e = cache.bookmarks[u];
@@ -1252,16 +1417,14 @@ async function runClustering() {
       }], 20);
       newLabels[cid] = label.trim() || `分类${cid}`;
     } catch { newLabels[cid] = `分类${cid}`; }
+    categoryLabels[stableId] = newLabels[cid];
   }
 
   // Update
-  for (const [cid, label] of Object.entries(newLabels)) {
-    categoryLabels[cid] = label;
-  }
   for (const [cid, clusterUrls] of Object.entries(clusterAssignments)) {
     for (const url of clusterUrls) {
       if (!cache.bookmarks[url].categories) cache.bookmarks[url].categories = [];
-      cache.bookmarks[url].categories = [categoryLabels[cid]];
+      cache.bookmarks[url].categories = [newLabels[cid]];
     }
   }
 
@@ -1270,14 +1433,30 @@ async function runClustering() {
 }
 
 // k-means implementation
-function kMeans(data, k, maxIter = 10) {
+function seededRandom(seed) {
+  let state = 2166136261;
+  for (const char of String(seed)) {
+    state ^= char.charCodeAt(0);
+    state = Math.imul(state, 16777619);
+  }
+  return () => {
+    state += 0x6D2B79F5;
+    let value = state;
+    value = Math.imul(value ^ value >>> 15, value | 1);
+    value ^= value + Math.imul(value ^ value >>> 7, value | 61);
+    return ((value ^ value >>> 14) >>> 0) / 4294967296;
+  };
+}
+
+function kMeans(data, k, maxIter = 10, seed = 'bfs') {
   const n = data.length, d = data[0].length;
+  const random = seededRandom(seed);
   // Initialize centroids with k-means++
-  const centroids = [data[Math.floor(Math.random() * n)]];
+  const centroids = [data[Math.floor(random() * n)]];
   for (let i = 1; i < k; i++) {
     const dists = data.map(p => Math.min(...centroids.map(c => euclideanSq(p, c))));
     const sum = dists.reduce((a, b) => a + b, 0);
-    let r = Math.random() * sum, idx = 0;
+    let r = random() * sum, idx = 0;
     for (; idx < n && r > 0; idx++) r -= dists[idx];
     centroids.push(data[Math.min(idx, n - 1)]);
   }
@@ -1303,15 +1482,19 @@ function kMeans(data, k, maxIter = 10) {
 
   // Silhouette score (simplified)
   let score = 0;
-  for (let i = 0; i < n; i++) {
-    const a = averageDistToCluster(data[i], data.filter((_, j) => clusters[j] === clusters[i]));
-    const b = Math.min(...Array.from({length: k}, (_, cid) => {
-      if (cid === clusters[i]) return Infinity;
-      return averageDistToCluster(data[i], data.filter((_, j) => clusters[j] === cid));
-    }));
+  let scoreCount = 0;
+  const grouped = Array.from({ length: k }, () => []);
+  for (let i = 0; i < n; i++) grouped[clusters[i]].push(data[i]);
+  const sampleStep = Math.max(1, Math.ceil(n / 120));
+  for (let i = 0; i < n; i += sampleStep) {
+    const a = averageDistToCluster(data[i], grouped[clusters[i]]);
+    const b = Math.min(...grouped.map((group, cid) =>
+      cid === clusters[i] ? Infinity : averageDistToCluster(data[i], group)
+    ));
     score += (b - a) / Math.max(a, b);
+    scoreCount++;
   }
-  score /= n;
+  score /= scoreCount;
   return { clusters: [...clusters], score };
 }
 
@@ -1340,8 +1523,8 @@ function cosineSimilarity(a, b) {
 function vectorSearch(queryEmbedding, topK = SEARCH_TOP_K) {
   const scored = [];
   for (const [url, entry] of Object.entries(cache.bookmarks)) {
-    if (!entry.embedding) continue;
-    const sim = cosineSimilarity(queryEmbedding, entry.embedding);
+    if (!embeddingsCompatible(queryEmbedding, entry)) continue;
+    const sim = cosineSimilarity(queryEmbedding.vector, entry.embedding);
     scored.push({ url, sim, summary: entry.summary, keywords: entry.keywords });
   }
   scored.sort((a, b) => b.sim - a.sim);
@@ -1354,42 +1537,114 @@ let activeCount = 0;
 let completedCount = 0;
 let totalCount = 0;
 let alreadyDoneCount = 0;  // items already processed before queue started
+let failedCount = 0;
+const inFlightUrls = new Set();
+const failedUrls = new Set();
 
-const BATCH_SIZE = 100;
-const BATCH_THRESHOLD = 500;
+function buildProgressSnapshot(pending, inFlight, failed, counters) {
+  return {
+    pendingUrls: [...new Set([...pending, ...inFlight, ...failed])],
+    completedCount: counters.completedCount,
+    totalCount: counters.totalCount,
+    alreadyDoneCount: counters.alreadyDoneCount,
+    failedCount: counters.failedCount,
+  };
+}
+
+async function withRetry(operation, maxAttempts = 3, baseDelay = 500) {
+  let lastError;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try { return await operation(); }
+    catch (error) {
+      lastError = error;
+      if (attempt < maxAttempts && baseDelay > 0) await sleep(baseDelay * 2 ** (attempt - 1));
+    }
+  }
+  throw lastError;
+}
+
+function entryNeedsProcessing(entry) {
+  return !entry?.summary || !embeddingsCompatible(desiredEmbeddingMeta(), entry);
+}
+
+async function persistProgress() {
+  const snapshot = buildProgressSnapshot(pendingUrls, inFlightUrls, failedUrls, {
+    completedCount, totalCount, alreadyDoneCount, failedCount,
+  });
+  const [idbResult, opfsResult] = await Promise.allSettled([
+    idbSet(IDB_PROGRESS_KEY, snapshot),
+    opfsWrite(OPFS_PROGRESS_FILE, snapshot),
+  ]);
+  const idbSucceeded = idbResult.status === 'fulfilled';
+  const opfsSucceeded = opfsResult.status === 'fulfilled' && opfsResult.value === true;
+  if (!idbSucceeded && !opfsSucceeded) throw new Error('进度写入失败：IndexedDB 与 OPFS 均不可用');
+}
+
+async function loadProgress() {
+  let progress = null;
+  try { progress = await idbGet(IDB_PROGRESS_KEY); }
+  catch(e) { console.warn('IndexedDB progress read failed:', e.message); }
+  if (!progress) {
+    progress = await opfsRead(OPFS_PROGRESS_FILE);
+    if (progress) {
+      try { await idbSet(IDB_PROGRESS_KEY, progress); } catch { /* OPFS remains authoritative */ }
+    }
+  }
+  return progress;
+}
 
 // Process a single batch of URLs with concurrent workers
 async function processBatch(urls) {
   pendingUrls = [...urls];
-  const batchTotal = urls.length;
-  let batchDone = 0;
 
   const worker = async () => {
-    while (pendingUrls.length > 0 && activeCount < CONCURRENT_LIMIT) {
+    while (pendingUrls.length > 0) {
       const url = pendingUrls.shift();
-      if (cache.bookmarks[url]?.summary) { batchDone++; completedCount++; updateProgress(); continue; }
+      if (!entryNeedsProcessing(cache.bookmarks[url])) {
+        completedCount++;
+        updateProgress();
+        await persistProgress();
+        continue;
+      }
       activeCount++;
+      inFlightUrls.add(url);
       try {
         const bm = bookmarkMap[url];
-        if (!bm) { activeCount--; continue; }
+        if (!bm) throw new Error('书签不存在于当前导入文件');
         domProgressLabel.textContent = `处理中 (第${completedCount - alreadyDoneCount + 1}个)`;
-        const { summary, keywords } = await generateSummary(url, bm.title);
-        let embedding = null;
-        try { embedding = await getEmbedding(`${bm.title} ${summary} ${keywords.join(' ')}`); }
-        catch(e) { console.warn('Embedding failed for', url, e.message); }
-        cache.bookmarks[url] = { summary, keywords, categories: [], embedding, generatedAt: new Date().toISOString() };
-        batchDone++;
+        const existing = cache.bookmarks[url];
+        const content = existing?.summary
+          ? { summary: existing.summary, keywords: existing.keywords || [] }
+          : await withRetry(() => generateSummary(url, bm.title));
+        const embeddingResult = await withRetry(
+          () => getEmbedding(`${bm.title} ${content.summary} ${content.keywords.join(' ')}`),
+        );
+        if (!embeddingResult) throw new Error('Embedding 模型不可用');
+        cache.bookmarks[url] = {
+          ...existing,
+          summary: content.summary,
+          keywords: content.keywords,
+          summarySource: 'title-url-inference',
+          categories: existing?.categories || [],
+          embedding: embeddingResult?.vector || null,
+          embeddingProvider: embeddingResult.provider,
+          embeddingModel: embeddingResult.model,
+          embeddingDimensions: embeddingResult.dimensions,
+          generatedAt: new Date().toISOString(),
+        };
+        await persistCache();
         completedCount++;
         updateBookmarkCardUI(url);
-        updateProgress();
-        await persistCache();
       } catch(e) {
         console.error('Generate failed for', url, e.message);
-        batchDone++;
-        completedCount++;
-        updateProgress();
+        failedUrls.add(url);
+        failedCount++;
       } finally {
+        inFlightUrls.delete(url);
         activeCount--;
+        updateProgress();
+        try { await persistProgress(); }
+        catch(e) { console.error('Progress save failed:', e.message); }
       }
     }
   };
@@ -1397,68 +1652,60 @@ async function processBatch(urls) {
   const workers = [];
   for (let i = 0; i < CONCURRENT_LIMIT; i++) workers.push(worker());
   await Promise.all(workers);
-  return batchDone;
+  return failedUrls.size;
 }
 
 async function startBackgroundQueue(urls) {
-  totalCount = urls.length;
-  alreadyDoneCount = urls.filter(u => cache.bookmarks[u]?.summary).length;
-  completedCount = alreadyDoneCount;
-  activeCount = 0;
-
-  domProgressArea.classList.remove('hidden');
-  updateProgress();
-
   if (queueRunning) return;
   queueRunning = true;
+  try {
+    const uniqueUrls = [...new Set(urls)];
+    totalCount = uniqueUrls.length;
+    alreadyDoneCount = uniqueUrls.filter(u => !entryNeedsProcessing(cache.bookmarks[u])).length;
+    completedCount = alreadyDoneCount;
+    failedCount = 0;
+    activeCount = 0;
+    inFlightUrls.clear();
+    failedUrls.clear();
 
-  await idbSet(IDB_PROGRESS_KEY, { pendingUrls: [], completedCount, totalCount, alreadyDoneCount });
-
-  // Filter unprocessed
-  const unprocessed = urls.filter(u => !cache.bookmarks[u]?.summary);
-  const newCount = unprocessed.length;
-
-  if (newCount > BATCH_THRESHOLD) {
-    // Batch mode: process 100 at a time, cluster after each batch
-    domProgressLabel.textContent = `分批处理中 (共${newCount}个, 每批${BATCH_SIZE}个)`;
-    const batches = [];
-    for (let i = 0; i < unprocessed.length; i += BATCH_SIZE) {
-      batches.push(unprocessed.slice(i, i + BATCH_SIZE));
-    }
-    for (let bi = 0; bi < batches.length; bi++) {
-      domProgressLabel.textContent = `批次 ${bi + 1}/${batches.length} — 处理中`;
-      await processBatch(batches[bi]);
-      // Cluster after each batch
-      domProgressLabel.textContent = `批次 ${bi + 1}/${batches.length} — 聚类中`;
-      await runClustering();
-      renderCategoryList();
-      await idbSet(IDB_PROGRESS_KEY, { pendingUrls: [], completedCount, totalCount, alreadyDoneCount });
-    }
-  } else {
-    // Normal mode: all at once, cluster every 20 items handled in worker via old logic
-    // For simplicity, use batch mode too but in one batch, then cluster at end
+    const unprocessed = uniqueUrls.filter(u => entryNeedsProcessing(cache.bookmarks[u]));
+    pendingUrls = [...unprocessed];
+    domProgressArea.classList.remove('hidden');
     domProgressLabel.textContent = '处理中';
+    updateProgress();
+    await persistProgress();
     await processBatch(unprocessed);
+
+    if (failedUrls.size === 0) {
+      domProgressLabel.textContent = '已完成';
+      try { await runClustering(); }
+      catch(e) { console.error('Clustering failed:', e.message); }
+      renderCategoryList();
+      renderFolderTree();
+      filterAndRenderCards();
+      pendingUrls = [];
+      await persistProgress();
+      setTimeout(() => { domProgressArea.classList.add('hidden'); }, 4000);
+    } else {
+      domProgressLabel.textContent = `部分失败（${failedUrls.size}），下次可继续`;
+      await persistProgress();
+    }
+  } catch(e) {
+    domProgressLabel.textContent = `任务中断：${e.message}`;
+    console.error('Queue failed:', e);
+    try { await persistProgress(); } catch { /* original error is more useful */ }
+  } finally {
+    queueRunning = false;
+    updateProgress();
   }
-
-  // All done
-  queueRunning = false;
-  domProgressLabel.textContent = '已完成';
-  updateProgress();
-  await runClustering();
-  renderCategoryList();
-  renderFolderTree();
-  filterAndRenderCards();
-
-  await idbSet(IDB_PROGRESS_KEY, { pendingUrls: [], completedCount, totalCount });
-  setTimeout(() => { domProgressArea.classList.add('hidden'); }, 4000);
 }
 
 function updateProgress() {
-  const done = completedCount + activeCount;
-  const pct = totalCount > 0 ? Math.round((done / totalCount) * 100) : 0;
+  const pct = totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : 0;
   domProgressFill.style.width = `${pct}%`;
-  domProgressText.textContent = `${completedCount}/${totalCount}`;
+  domProgressText.textContent = failedCount > 0
+    ? `${completedCount}/${totalCount}，失败 ${failedCount}`
+    : `${completedCount}/${totalCount}`;
   if (queueRunning || pendingUrls.length > 0) {
     domProgressArea.classList.remove('hidden');
   }
@@ -1489,7 +1736,7 @@ function addChatMessage(role, content, recommendations) {
   if (recommendations && recommendations.length) {
     for (const rec of recommendations) {
       const bm = bookmarkMap[rec.url];
-      html += `<div class="rec-card" data-url="${escapeHtml(rec.url)}">
+      html += `<div class="rec-card" data-url="${escapeAttribute(rec.url)}">
         <div class="rec-title">${escapeHtml(rec.title || bm?.title || rec.url)}</div>
         <div class="rec-reason">${escapeHtml(rec.reason || '')}</div>
       </div>`;
@@ -1522,7 +1769,7 @@ async function sendChatMessage() {
   try {
     // Vectorize query
     const queryEmbedding = await getEmbedding(query);
-    console.log('[Chat] embedding:', queryEmbedding ? `${queryEmbedding.length}维` : 'null');
+    console.log('[Chat] embedding:', queryEmbedding ? `${queryEmbedding.dimensions}维` : 'null');
     if (!queryEmbedding) {
       addChatMessage('assistant', 'Embedding 模型未就绪，请等待模型加载完成（顶部栏绿色圆点）。');
       return;
@@ -1547,32 +1794,16 @@ async function sendChatMessage() {
 
     console.log('[Chat] Pro请求中...');
     const response = await callDeepSeek('deepseek-v4-pro', [
-      { role: 'system', content: '你是一个书签推荐助手。根据用户问题从提供的书签列表中推荐3-5个最相关的网站。每个推荐包含标题和简短理由。格式：标题：理由\nURL\n---' },
+      { role: 'system', content: '你是书签推荐助手。只能推荐候选列表中的 URL。仅输出 JSON 数组，不要 Markdown。每项格式：{"title":"标题","reason":"简短理由","url":"候选中的完整URL"}。' },
       { role: 'user', content: `对话历史:\n${recentContext}\n\n用户当前问题: ${query}\n\n可用书签（按相关度排序，共${topResults.length}个）:\n${topBookmarksText}\n\n请推荐3-5个最相关的书签。` },
     ], 600);
     console.log('[Chat] Pro响应:', response.substring(0, 200));
 
     // Parse recommendations
-    const recommendations = [];
-    const parts = response.split('---').filter(p => p.trim());
-    console.log('[Chat] 解析为', parts.length, '个分段');
-    for (const part of parts) {
-      const lines = part.trim().split('\n').filter(l => l.trim());
-      console.log('[Chat] 分段行数:', lines.length, '首行:', lines[0]?.substring(0, 60));
-      if (lines.length >= 2) {
-        const titleReason = lines[0].trim();
-        const urlLine = lines[1].trim();
-        const colonIdx = titleReason.indexOf('：') !== -1 ? titleReason.indexOf('：') : titleReason.indexOf(':');
-        const title = colonIdx > 0 ? titleReason.substring(0, colonIdx).trim() : titleReason;
-        const reason = colonIdx > 0 ? titleReason.substring(colonIdx + 1).trim() : '';
-        if (urlLine.startsWith('http')) {
-          recommendations.push({ title, reason, url: urlLine });
-          console.log('[Chat] 添加推荐:', title, urlLine);
-        } else {
-          console.log('[Chat] URL行不符合:', urlLine);
-        }
-      }
-    }
+    const recommendations = parseRecommendations(
+      response,
+      new Set(topResults.map(result => result.url)),
+    );
 
     if (recommendations.length === 0) {
       console.warn('[Chat] 解析失败，原始响应:', response);
@@ -1656,7 +1887,7 @@ async function exportBookmarksHTML() {
     for (const bm of bms) {
       const entry = cache.bookmarks[bm.url];
       const desc = entry ? `BFS_SUMMARY: ${entry.summary || ''} | BFS_KEYWORDS: ${(entry.keywords||[]).join(';')} | BFS_CATEGORIES: ${(entry.categories||[]).join(';')}` : '';
-      html += `        <DT><A HREF="${escapeHtml(bm.url)}" ADD_DATE="${Math.floor(bm.addDate/1000)}" BFS_DESC="${escapeHtml(desc)}">${escapeHtml(bm.title)}</A>\n`;
+      html += `        <DT><A HREF="${escapeAttribute(bm.url)}" ADD_DATE="${Math.floor(bm.addDate/1000)}" BFS_DESC="${escapeAttribute(desc)}">${escapeHtml(bm.title)}</A>\n`;
     }
     html += `    </DL><p>\n`;
   }
@@ -1726,7 +1957,7 @@ domBtnImport.addEventListener('click', triggerImport);
 
 // ---- Resume Detection ----
 async function checkResume() {
-  const progress = await idbGet(IDB_PROGRESS_KEY);
+  const progress = await loadProgress();
   if (progress && progress.pendingUrls && progress.pendingUrls.length > 0) {
     domResumePrompt.classList.remove('hidden');
     domResumePrompt.innerHTML = `
@@ -1745,7 +1976,11 @@ async function checkResume() {
     });
 
     domResumePrompt.querySelector('#btn-restart').addEventListener('click', async () => {
-      await idbSet(IDB_PROGRESS_KEY, { pendingUrls: [], completedCount: 0, totalCount: 0 });
+      const emptyProgress = { pendingUrls: [], completedCount: 0, totalCount: 0, failedCount: 0 };
+      await Promise.allSettled([
+        idbSet(IDB_PROGRESS_KEY, emptyProgress),
+        opfsWrite(OPFS_PROGRESS_FILE, emptyProgress),
+      ]);
       domResumePrompt.classList.add('hidden');
     });
   }

@@ -15,7 +15,7 @@ python -m http.server 8080
 
 ## 功能
 
-- **自动摘要**：导入书签后后台自动调用 DeepSeek V4 Flash 生成中文摘要与关键词
+- **自动摘要**：根据书签标题与 URL 调用 DeepSeek V4 Flash 生成推断摘要与关键词（不读取网页正文）
 - **向量检索**：本地 embedding 模型（384 维）将摘要向量化，支持语义搜索
 - **智能对话**：用自然语言描述需求，DeepSeek V4 Pro 从书签中推荐最相关网站
 - **自动分类**：k-means 聚类 + AI 标签，书签自动归入学习/工具/资源等类别
@@ -30,6 +30,8 @@ python -m http.server 8080
 
 不填 OpenAI Key 时自动使用本地 embedding 模型（`models/` 目录，首次加载无需网络）。
 
+API Key 只保存在当前浏览器标签页的 `sessionStorage`，关闭标签页后自动清除；API URL 会保存在 `localStorage`。
+
 ## 模型文件
 
 `models/Xenova/all-MiniLM-L6-v2/` 包含 5 个文件（~23MB）：
@@ -43,6 +45,8 @@ python -m http.server 8080
 | `onnx/model_quantized.onnx` | 22 MB |
 
 来源：https://huggingface.co/Xenova/all-MiniLM-L6-v2
+
+本地运行库固定为 `@xenova/transformers@2.16.1`，来源为 jsDelivr 对应 npm 包的 `dist/` 目录。许可证保存在 `vendor/TRANSFORMERS_JS_LICENSE`，文件校验值保存在 `vendor/SHA256SUMS`。
 
 ## 数据存储
 
@@ -59,6 +63,8 @@ BFS/
 ├── index.html                 # 主应用（单文件 SPA）
 ├── start.bat                  # Windows 一键启动
 ├── models/                    # 本地 embedding 模型
+├── vendor/                    # 本地 Transformers.js 运行库
+├── tests/                     # Node.js 回归测试
 ├── favorites_test_100.html    # 测试数据（100 条书签）
 ├── favorites_2026_6_29.html   # 示例数据（1849 条书签）
 └── BV.html                    # v1 旧版
